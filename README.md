@@ -7,6 +7,7 @@ Backend monorepo for Jobl AI services.
 - `services/api`: FastAPI service, SQLAlchemy models, Alembic migrations.
 - `services/sync`: scraper ingestion worker (fetch + export marking + upsert pipeline).
 - `services/normalize`: backlog normalization worker for processed text fields.
+- `services/training`: dataset preparation and LoRA training helpers for mini-LLM.
 - `services/llm`: LLM-focused workers/pipelines (separate from HTTP API).
 - `libs/common`: shared Python utilities used across services.
 
@@ -51,6 +52,16 @@ Install normalize dependencies:
 
 ```bash
 cd /home/<user>/Jobl/api.jobl.ai/services/normalize
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install -e .
+```
+
+Install training dependencies:
+
+```bash
+cd /home/<user>/Jobl/api.jobl.ai/services/training
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -U pip
@@ -151,6 +162,17 @@ LLM labeling from raw sample fields (no rule preprocessing):
 cd services/normalize
 source .venv/bin/activate
 jobl-normalize-llm-label --batch-tag=eval_v1 --limit=500
+```
+
+## Training pipeline bootstrap
+
+```bash
+cd /home/<user>/Jobl/api.jobl.ai/services/training
+source .venv/bin/activate
+jobl-training-export --out=data/raw/labeled.jsonl --limit=1000
+jobl-training-split --in=data/raw/labeled.jsonl --out-dir=data/splits
+jobl-training-build-jsonl --in=data/splits/train.jsonl --out=data/sft/train.jsonl
+jobl-training-build-jsonl --in=data/splits/val.jsonl --out=data/sft/val.jsonl
 ```
 
 ## Related repositories
