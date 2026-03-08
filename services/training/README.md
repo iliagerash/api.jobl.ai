@@ -106,11 +106,11 @@ Purpose:
 Arguments:
 - `--train-jsonl`, `--val-jsonl`: instruction datasets.
   Defaults: `data/sft/train.jsonl` and `data/sft/val.jsonl`.
-- `--model`: HF base model id (default `Qwen/Qwen2.5-3B-Instruct`).
+- `--model`: HF base model id (default `microsoft/Phi-3-mini-4k-instruct`).
 - `--out-dir`: training output directory.
 - `--epochs`, `--batch-size`, `--grad-accum`, `--lr`, `--max-seq-len`: training hyperparameters.
 - `--memory-safe`: CPU-safe profile for low-memory hosts.
-  On CPU it switches default 3B model to `Qwen/Qwen2.5-0.5B-Instruct`, forces `batch_size=1`,
+  On CPU it switches default model to `Qwen/Qwen2.5-0.5B-Instruct`, forces `batch_size=1`,
   increases gradient accumulation, caps sequence length, and limits epochs for first pilot.
 
 Outputs:
@@ -123,7 +123,7 @@ Example:
 jobl-training-train-lora
 
 jobl-training-train-lora \
-  --model=Qwen/Qwen2.5-3B-Instruct \
+  --model=microsoft/Phi-3-mini-4k-instruct \
   --out-dir=artifacts/lora-normalize-v1 \
   --epochs=2 \
   --batch-size=2 \

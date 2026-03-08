@@ -21,7 +21,7 @@ def parse_args() -> argparse.Namespace:
         default="data/sft/val.jsonl",
         help="Instruction val JSONL path",
     )
-    parser.add_argument("--model", default="Qwen/Qwen2.5-3B-Instruct", help="Base HF model id")
+    parser.add_argument("--model", default="microsoft/Phi-3-mini-4k-instruct", help="Base HF model id")
     parser.add_argument("--out-dir", default="artifacts/lora-normalize-v1", help="Output directory")
     parser.add_argument("--epochs", type=float, default=2.0, help="Number of epochs")
     parser.add_argument("--batch-size", type=int, default=2, help="Per-device train batch size")
@@ -206,7 +206,9 @@ def _apply_memory_safe_profile(args: argparse.Namespace, *, has_cuda: bool) -> a
         return args
 
     # Conservative defaults for 32GB RAM CPU hosts.
-    if not has_cuda and args.model == "Qwen/Qwen2.5-3B-Instruct":
+    if not has_cuda and args.model == "microsoft/Phi-3-mini-4k-instruct":
+        args.model = "Qwen/Qwen2.5-0.5B-Instruct"
+    elif not has_cuda and args.model == "Qwen/Qwen2.5-3B-Instruct":
         args.model = "Qwen/Qwen2.5-0.5B-Instruct"
     args.batch_size = 1
     args.grad_accum = max(args.grad_accum, 16)
