@@ -33,6 +33,27 @@ coverage/
 .turbo/
 .next/
 out/
+htmlcov/
+site/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.python-version
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.hypothesis/
+.tox/
+.nox/
+.venv/
+venv/
+ENV/
+env/
+pip-wheel-metadata/
+*.egg-info/
 
 # Package manager stores
 .pnpm-store/
