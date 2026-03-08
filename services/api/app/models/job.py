@@ -25,6 +25,7 @@ class Job(Base):
         Index("idx_jobs_active_pub", "is_active", "published_at"),
         Index("idx_jobs_country_active_pub", "country_code", "is_active", "published_at"),
         Index("idx_jobs_remote_active_pub", "is_remote", "is_active", "published_at"),
+        Index("idx_jobs_language_code", "language_code"),
     )
 
     id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
@@ -49,6 +50,7 @@ class Job(Base):
     region_id: Mapped[int | None] = mapped_column(BIGINT, nullable=True)
     region_title: Mapped[str | None] = mapped_column(VARCHAR(255), nullable=True)
     country_code: Mapped[str | None] = mapped_column(CHAR(2), nullable=True)
+    language_code: Mapped[str | None] = mapped_column(CHAR(2), nullable=True)
 
     # Compensation / attributes
     salary_min: Mapped[float | None] = mapped_column(NUMERIC(15, 2), nullable=True)

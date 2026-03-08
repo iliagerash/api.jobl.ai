@@ -14,6 +14,7 @@ class NormalizationSample(Base):
             name="ck_normalization_samples_review_status",
         ),
         Index("idx_normalization_samples_source", "source_db", "country_code", "site_id"),
+        Index("idx_normalization_samples_language_code", "language_code"),
         Index("idx_normalization_samples_review_status", "review_status"),
         Index("idx_normalization_samples_batch_tag", "batch_tag"),
     )
@@ -21,6 +22,7 @@ class NormalizationSample(Base):
     id: Mapped[int] = mapped_column(BIGINT, primary_key=True, autoincrement=True)
     source_db: Mapped[str] = mapped_column(VARCHAR(128), nullable=False)
     country_code: Mapped[str | None] = mapped_column(VARCHAR(2), nullable=True)
+    language_code: Mapped[str | None] = mapped_column(VARCHAR(2), nullable=True)
     country_name: Mapped[str | None] = mapped_column(VARCHAR(128), nullable=True)
     city_title: Mapped[str | None] = mapped_column(VARCHAR(255), nullable=True)
     region_title: Mapped[str | None] = mapped_column(VARCHAR(255), nullable=True)

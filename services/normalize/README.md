@@ -36,23 +36,29 @@ jobl-normalize --max-batches=10
 jobl-normalize --from-id=500000
 ```
 
-## Build random samples for evaluation
+## Build language-proportional samples for evaluation
 
 After running migrations, build samples directly from `jobs`.
 
-Generate ~200 random rows per distinct `country_code`:
+Generate a language-balanced sample (default total: `50000`):
 
 ```bash
 cd /home/<user>/Jobl/api.jobl.ai/services/normalize
 source .venv/bin/activate
-jobl-normalize-sample --per-country=200
+jobl-normalize-sample
 ```
 
-Use explicit tag and replace mode:
+Generate a custom total and replace existing samples:
 
 ```bash
-jobl-normalize-sample --per-country=200 --batch-tag=eval_v1 --replace
+jobl-normalize-sample --total=15000 --replace
 ```
+
+Notes:
+- `--batch-tag` is no longer a CLI option; the script generates one automatically.
+- sampling is driven by target language proportions across:
+  `en, es, de, fr, pt, it, gr, nl, da, uk`
+- rows with `jobs.language_code IS NULL` are skipped
 
 ## Run evaluation on samples
 
@@ -66,6 +72,53 @@ Evaluate only a subset:
 
 ```bash
 jobl-normalize-eval --batch-tag=eval_v1 --limit=500
+```
+
+## Label Samples With LLM (Raw Input, No Rules)
+
+Use this flow when you want labels from raw unprocessed data.
+`jobl-normalize-llm-label` sends `title_raw` and `description_raw` directly to OpenAI and writes outputs to:
+- `expected_title_normalized`
+- `expected_description_html`
+
+Implementation notes:
+- strict structured output (`json_schema`) is enforced
+- categorization is intentionally omitted from this pipeline
+
+Configure `.env`:
+
+```bash
+OPENAI_API_KEY="..."
+OPENAI_MODEL="gpt-5-nano"
+OPENAI_TIMEOUT_SECONDS=60
+OPENAI_MAX_RETRIES=3
+OPENAI_BATCH_COMPLETION_WINDOW="24h"
+OPENAI_BATCH_POLL_SECONDS=15
+LLM_PROMPT_VERSION="v1"
+```
+
+Label pending rows for one batch (OpenAI Batch API is default):
+
+```bash
+jobl-normalize-llm-label --batch-tag=eval_v1 --limit=500
+```
+
+Disable batch mode and run one-by-one requests:
+
+```bash
+jobl-normalize-llm-label --batch-tag=eval_v1 --limit=200 --no-batch
+```
+
+Continue from a row id:
+
+```bash
+jobl-normalize-llm-label --batch-tag=eval_v1 --from-id=30000 --limit=1000
+```
+
+Overwrite existing expected labels:
+
+```bash
+jobl-normalize-llm-label --batch-tag=eval_v1 --overwrite --limit=500
 ```
 
 ## ML-only title normalization

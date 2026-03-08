@@ -7,6 +7,7 @@ dependencies = [
   "sqlalchemy>=2.0.43",
   "psycopg[binary]>=3.2.9",
   "pydantic-settings>=2.10.1",
+  "openai>=1.68.0",
 ]
 
 [project.optional-dependencies]
@@ -19,6 +20,7 @@ jobl-normalize = "app.main:run"
 jobl-normalize-sample = "app.sample_builder:run"
 jobl-normalize-eval = "app.eval_runner:run"
 jobl-normalize-ml-title = "app.ml_title_runner:run"
+jobl-normalize-llm-label = "app.llm_label_runner:run"
 
 [build-system]
 requires = ["setuptools>=68.0"]

@@ -92,6 +92,10 @@ Seeder SQL file:
 - `services/api/sql/seed_source_countries.sql`
 - `services/api/sql/seed_countries.sql`
 
+`seed_countries.sql` includes:
+- `alternate_names` (`text[]`) for country aliases
+- `language_codes` (`text[]`) for per-country primary/mixed language hints
+
 Current seed data:
 - `db_name = 'americas'`
 - `country_code = NULL`
@@ -121,6 +125,14 @@ cp .env.example .env
 jobl-sync
 ```
 
+Backfill detected language for existing jobs:
+
+```bash
+cd /home/<user>/Jobl/api.jobl.ai/services/sync
+source .venv/bin/activate
+jobl-sync-language-backfill --batch-size=2000
+```
+
 ## Normalize worker bootstrap
 
 ```bash
@@ -131,6 +143,14 @@ pip install -U pip
 pip install -e .
 cp .env.example .env
 jobl-normalize --batch-size=2000
+```
+
+LLM labeling from raw sample fields (no rule preprocessing):
+
+```bash
+cd services/normalize
+source .venv/bin/activate
+jobl-normalize-llm-label --batch-tag=eval_v1 --limit=500
 ```
 
 ## Related repositories

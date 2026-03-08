@@ -6,6 +6,8 @@ from datetime import datetime, timezone
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import URL
 
+from app.language import detect_language_code
+
 logger = logging.getLogger("jobl.sync")
 
 
@@ -496,6 +498,12 @@ class SyncWorker:
                     "region_id": row["region_id"],
                     "region_title": row["region_title"],
                     "country_code": country_code,
+                    "language_code": detect_language_code(
+                        title=row.get("position"),
+                        description=row.get("description"),
+                        country_code=country_code,
+                        source_db=source_db,
+                    ).language_code,
                     "salary_min": row["salary_min"],
                     "salary_max": row["salary_max"],
                     "salary_period": row["salary_period"],
@@ -532,6 +540,7 @@ class SyncWorker:
                 region_id,
                 region_title,
                 country_code,
+                language_code,
                 salary_min,
                 salary_max,
                 salary_period,
@@ -559,6 +568,7 @@ class SyncWorker:
                 :region_id,
                 :region_title,
                 :country_code,
+                :language_code,
                 :salary_min,
                 :salary_max,
                 :salary_period,
@@ -586,6 +596,7 @@ class SyncWorker:
                 region_id = EXCLUDED.region_id,
                 region_title = EXCLUDED.region_title,
                 country_code = EXCLUDED.country_code,
+                language_code = EXCLUDED.language_code,
                 salary_min = EXCLUDED.salary_min,
                 salary_max = EXCLUDED.salary_max,
                 salary_period = EXCLUDED.salary_period,

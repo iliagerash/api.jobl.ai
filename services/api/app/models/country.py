@@ -11,3 +11,4 @@ class Country(Base):
     code: Mapped[str] = mapped_column(CHAR(2), primary_key=True)
     name: Mapped[str] = mapped_column(VARCHAR(128), nullable=False, unique=True)
     alternate_names: Mapped[list[str] | None] = mapped_column(ARRAY(TEXT), nullable=True)
+    language_codes: Mapped[list[str] | None] = mapped_column(ARRAY(TEXT), nullable=True)

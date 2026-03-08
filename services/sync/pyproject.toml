@@ -8,6 +8,7 @@ dependencies = [
   "pydantic-settings>=2.10.1",
   "psycopg[binary]>=3.2.9",
   "pymysql>=1.1.1",
+  "langid>=1.1.6",
 ]
 
 [project.optional-dependencies]
@@ -17,6 +18,7 @@ dev = [
 
 [project.scripts]
 jobl-sync = "app.main:run"
+jobl-sync-language-backfill = "app.language_backfill:run"
 
 [build-system]
 requires = ["setuptools>=68.0"]
