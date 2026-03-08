@@ -11,4 +11,5 @@ class SourceCountry(Base):
 
     db_name: Mapped[str] = mapped_column(String(128), primary_key=True)
     country_code: Mapped[str | None] = mapped_column(String(2), nullable=True)
+    currency: Mapped[str | None] = mapped_column(String(3), nullable=True)
     config: Mapped[dict[str, Any] | None] = mapped_column(JSON, nullable=True)

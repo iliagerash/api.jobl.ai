@@ -16,7 +16,7 @@ Keeping API in `services/api` is the right approach because it isolates dependen
 From repository root:
 
 ```bash
-cd /Users/webadmin/Work/Jobl/api.jobl.ai
+cd /home/<user>/Jobl/api.jobl.ai
 ```
 
 Install API dependencies:
@@ -32,7 +32,7 @@ pip install -e .
 Install sync dependencies:
 
 ```bash
-cd /Users/webadmin/Work/Jobl/api.jobl.ai/services/sync
+cd /home/<user>/Jobl/api.jobl.ai/services/sync
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -U pip
@@ -76,7 +76,8 @@ Seeder SQL file:
 Current seed data:
 - `db_name = 'americas'`
 - `country_code = NULL`
-- `config = {"country_code_in_job": 1}`
+- `currency = NULL`
+- `config = {"country_code_in_city": 1}`
 
 Behavior:
 - idempotent upsert (`ON CONFLICT (db_name) DO UPDATE`)

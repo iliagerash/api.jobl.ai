@@ -1,5 +1,5 @@
+import argparse
 import logging
-import time
 
 from app.config import settings
 from app.logging import configure_logging
@@ -9,7 +9,20 @@ from app.worker import SyncWorker
 logger = logging.getLogger("jobl.sync")
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Jobl sync worker")
+    parser.add_argument(
+        "--db",
+        action="append",
+        dest="dbs",
+        help="Source DB name to sync (repeatable). Example: --db=americas --db=australia",
+    )
+    return parser.parse_args()
+
+
 def run() -> None:
+    args = parse_args()
+    only_dbs = set(args.dbs or [])
     configure_logging(settings.log_level)
     worker = SyncWorker(
         source_db_driver=settings.source_db_driver,
@@ -17,24 +30,24 @@ def run() -> None:
         source_db_port=settings.source_db_port,
         source_db_user=settings.source_db_user,
         source_db_password=settings.source_db_password,
+        source_db_ssl_disabled=settings.source_db_ssl_disabled,
         target_database_url=settings.target_database_url,
         export_destination=settings.export_destination,
     )
 
     logger.info(
-        "sync worker started interval=%ss batch_size=%s",
-        settings.sync_interval_seconds,
+        "sync worker started batch_size=%s",
         settings.sync_batch_size,
     )
-    while True:
-        result = worker.run_once(batch_size=settings.sync_batch_size)
-        logger.info(
-            "sync iteration completed fetched=%s upserted=%s marked_exported=%s",
-            result.fetched,
-            result.upserted,
-            result.marked_exported,
-        )
-        time.sleep(settings.sync_interval_seconds)
+    if only_dbs:
+        logger.info("db filter enabled dbs=%s", ",".join(sorted(only_dbs)))
+    result = worker.run_once(batch_size=settings.sync_batch_size, only_dbs=only_dbs)
+    logger.info(
+        "sync run completed fetched=%s upserted=%s marked_exported=%s",
+        result.fetched,
+        result.upserted,
+        result.marked_exported,
+    )
 
 
 if __name__ == "__main__":

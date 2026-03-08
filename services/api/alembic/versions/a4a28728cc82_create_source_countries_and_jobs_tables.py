@@ -60,6 +60,7 @@ def upgrade() -> None:
     op.create_table('source_countries',
     sa.Column('db_name', sa.String(length=128), nullable=False),
     sa.Column('country_code', sa.String(length=2), nullable=True),
+    sa.Column('currency', sa.String(length=3), nullable=True),
     sa.Column('config', sa.JSON(), nullable=True),
     sa.PrimaryKeyConstraint('db_name')
     )
