@@ -138,6 +138,40 @@ Memory-safe run (recommended on 32GB RAM CPU host):
 jobl-training-train-lora --memory-safe
 ```
 
+### `jobl-training-eval-lora`
+
+Purpose:
+- Evaluates a trained LoRA adapter on `data/sft/test.jsonl`.
+- Computes quality metrics and exports mismatches for manual review.
+
+Arguments:
+- `--test-jsonl`: test instruction JSONL path (default `data/sft/test.jsonl`).
+- `--model`: base model id (default `microsoft/Phi-3-mini-4k-instruct`).
+- `--adapter-dir`: adapter directory (default `artifacts/lora-normalize-v1/adapter`).
+- `--limit`: optional max rows to evaluate, `0` means all.
+- `--max-new-tokens`, `--temperature`: inference params.
+- `--out-dir`: output artifacts directory (default `artifacts/lora-normalize-v1/eval`).
+
+Metrics:
+- `valid_json_rate`
+- `title_exact_rate`
+- `html_exact_rate`
+- `title_non_empty_rate`
+- `html_non_empty_rate`
+- `html_allowed_tags_only_rate`
+
+Outputs:
+- `summary.json`
+- `mismatches.jsonl`
+- `mismatches.csv`
+
+Example:
+
+```bash
+jobl-training-eval-lora
+jobl-training-eval-lora --limit=100 --out-dir=artifacts/lora-normalize-v1/eval_smoke
+```
+
 ## End-to-end quick run
 
 ```bash

@@ -1,0 +1,282 @@
+import argparse
+import csv
+import json
+import logging
+import re
+from pathlib import Path
+from typing import Any
+
+from app.io_utils import read_jsonl, write_jsonl
+from app.logging import configure_logging
+
+
+logger = logging.getLogger("jobl.training.eval_lora")
+
+ALLOWED_TAGS = {
+    "p",
+    "ul",
+    "ol",
+    "li",
+    "i",
+    "b",
+    "em",
+    "strong",
+    "u",
+    "h2",
+    "h3",
+    "h4",
+    "br",
+    "a",
+}
+TAG_RE = re.compile(r"<\s*/?\s*([a-zA-Z0-9]+)")
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Evaluate LoRA adapter on SFT test set")
+    parser.add_argument("--test-jsonl", default="data/sft/test.jsonl", help="Instruction test JSONL path")
+    parser.add_argument("--model", default="microsoft/Phi-3-mini-4k-instruct", help="Base HF model id")
+    parser.add_argument("--adapter-dir", default="artifacts/lora-normalize-v1/adapter", help="LoRA adapter directory")
+    parser.add_argument("--limit", type=int, default=0, help="Max rows to evaluate, 0 means all")
+    parser.add_argument("--max-new-tokens", type=int, default=768, help="Generation max_new_tokens")
+    parser.add_argument("--temperature", type=float, default=0.0, help="Generation temperature")
+    parser.add_argument("--out-dir", default="artifacts/lora-normalize-v1/eval", help="Directory for evaluation artifacts")
+    return parser.parse_args()
+
+
+def run() -> int:
+    args = parse_args()
+    configure_logging("INFO")
+
+    try:
+        _run_eval(args)
+    except KeyboardInterrupt:
+        logger.warning("interrupted by user (Ctrl+C), exiting gracefully")
+        return 130
+    return 0
+
+
+def _run_eval(args: argparse.Namespace) -> None:
+    try:
+        import torch
+        from peft import PeftModel
+        from transformers import AutoModelForCausalLM, AutoTokenizer
+    except ImportError as exc:
+        raise SystemExit("Dependencies missing. Install with: pip install -e '.[train]'") from exc
+
+    rows = read_jsonl(Path(args.test_jsonl))
+    if args.limit > 0:
+        rows = rows[: args.limit]
+    if not rows:
+        raise SystemExit("No test rows found")
+
+    has_cuda = torch.cuda.is_available()
+    dtype = torch.bfloat16 if has_cuda else torch.float32
+
+    tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=True)
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    base_model = AutoModelForCausalLM.from_pretrained(
+        args.model,
+        torch_dtype=dtype,
+        device_map="auto" if has_cuda else None,
+        low_cpu_mem_usage=True,
+    )
+    model = PeftModel.from_pretrained(base_model, args.adapter_dir)
+    model.eval()
+
+    device = "cuda" if has_cuda else "cpu"
+    if not has_cuda:
+        model.to("cpu")
+
+    metrics = {
+        "total": len(rows),
+        "valid_json": 0,
+        "title_exact": 0,
+        "html_exact": 0,
+        "title_non_empty": 0,
+        "html_non_empty": 0,
+        "html_allowed_tags_only": 0,
+    }
+    mismatches: list[dict[str, Any]] = []
+
+    for idx, row in enumerate(rows, start=1):
+        prompt = _build_inference_prompt(row)
+        pred = _generate_prediction(
+            model=model,
+            tokenizer=tokenizer,
+            prompt=prompt,
+            device=device,
+            max_new_tokens=args.max_new_tokens,
+            temperature=args.temperature,
+        )
+
+        expected = _parse_assistant_target(row)
+        pred_obj = _parse_json_loose(pred)
+
+        valid_json = isinstance(pred_obj, dict)
+        if valid_json:
+            metrics["valid_json"] += 1
+
+        pred_title = str((pred_obj or {}).get("title_normalized") or "").strip()
+        pred_html = str((pred_obj or {}).get("description_html") or "").strip()
+        exp_title = str(expected.get("title_normalized") or "").strip()
+        exp_html = str(expected.get("description_html") or "").strip()
+
+        if pred_title:
+            metrics["title_non_empty"] += 1
+        if pred_html:
+            metrics["html_non_empty"] += 1
+        if _uses_only_allowed_tags(pred_html):
+            metrics["html_allowed_tags_only"] += 1
+
+        title_exact = pred_title == exp_title
+        html_exact = pred_html == exp_html
+        if title_exact:
+            metrics["title_exact"] += 1
+        if html_exact:
+            metrics["html_exact"] += 1
+
+        if not (title_exact and html_exact):
+            mismatches.append(
+                {
+                    "id": row.get("id"),
+                    "language_code": row.get("language_code"),
+                    "expected_title_normalized": exp_title,
+                    "predicted_title_normalized": pred_title,
+                    "expected_description_html": exp_html,
+                    "predicted_description_html": pred_html,
+                    "raw_prediction": pred,
+                    "valid_json": valid_json,
+                    "title_exact": title_exact,
+                    "html_exact": html_exact,
+                    "html_allowed_tags_only": _uses_only_allowed_tags(pred_html),
+                }
+            )
+
+        if idx % 20 == 0 or idx == len(rows):
+            logger.info("eval progress processed=%s/%s", idx, len(rows))
+
+    summary = {
+        **metrics,
+        "valid_json_rate": round(metrics["valid_json"] / metrics["total"], 4),
+        "title_exact_rate": round(metrics["title_exact"] / metrics["total"], 4),
+        "html_exact_rate": round(metrics["html_exact"] / metrics["total"], 4),
+        "title_non_empty_rate": round(metrics["title_non_empty"] / metrics["total"], 4),
+        "html_non_empty_rate": round(metrics["html_non_empty"] / metrics["total"], 4),
+        "html_allowed_tags_only_rate": round(metrics["html_allowed_tags_only"] / metrics["total"], 4),
+        "mismatch_count": len(mismatches),
+    }
+
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")
+    write_jsonl(out_dir / "mismatches.jsonl", mismatches)
+    _write_mismatches_csv(out_dir / "mismatches.csv", mismatches)
+
+    logger.info("evaluation completed total=%s valid_json=%s title_exact=%s html_exact=%s mismatches=%s", metrics["total"], metrics["valid_json"], metrics["title_exact"], metrics["html_exact"], len(mismatches))
+    logger.info("artifacts summary=%s mismatches_jsonl=%s mismatches_csv=%s", out_dir / "summary.json", out_dir / "mismatches.jsonl", out_dir / "mismatches.csv")
+
+
+def _build_inference_prompt(row: dict[str, Any]) -> str:
+    messages = row.get("messages") or []
+    system = _message_content(messages, 0)
+    user = _message_content(messages, 1)
+    return f"<|system|>\n{system}\n<|user|>\n{user}\n<|assistant|>\n"
+
+
+def _message_content(messages: Any, index: int) -> str:
+    if not isinstance(messages, list) or len(messages) <= index:
+        return ""
+    msg = messages[index]
+    if isinstance(msg, dict):
+        return str(msg.get("content") or "")
+    return ""
+
+
+def _generate_prediction(*, model, tokenizer, prompt: str, device: str, max_new_tokens: int, temperature: float) -> str:
+    import torch
+
+    encoded = tokenizer(prompt, return_tensors="pt")
+    input_ids = encoded["input_ids"].to(device)
+    attention_mask = encoded.get("attention_mask")
+    if attention_mask is not None:
+        attention_mask = attention_mask.to(device)
+
+    do_sample = temperature > 0
+    with torch.no_grad():
+        out = model.generate(
+            input_ids=input_ids,
+            attention_mask=attention_mask,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature if do_sample else None,
+            do_sample=do_sample,
+            pad_token_id=tokenizer.pad_token_id,
+            eos_token_id=tokenizer.eos_token_id,
+        )
+
+    gen_ids = out[0][input_ids.shape[1] :]
+    return tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
+
+
+def _parse_assistant_target(row: dict[str, Any]) -> dict[str, Any]:
+    messages = row.get("messages") or []
+    content = _message_content(messages, 2)
+    return _parse_json_loose(content) or {}
+
+
+def _parse_json_loose(content: str) -> dict[str, Any] | None:
+    text = (content or "").strip()
+    if not text:
+        return None
+
+    try:
+        obj = json.loads(text)
+        if isinstance(obj, dict):
+            return obj
+    except json.JSONDecodeError:
+        pass
+
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        candidate = text[start : end + 1]
+        try:
+            obj = json.loads(candidate)
+            if isinstance(obj, dict):
+                return obj
+        except json.JSONDecodeError:
+            return None
+    return None
+
+
+def _uses_only_allowed_tags(html: str) -> bool:
+    if not html:
+        return True
+    tags = {m.group(1).lower() for m in TAG_RE.finditer(html)}
+    return tags.issubset(ALLOWED_TAGS)
+
+
+def _write_mismatches_csv(path: Path, rows: list[dict[str, Any]]) -> None:
+    fieldnames = [
+        "id",
+        "language_code",
+        "valid_json",
+        "title_exact",
+        "html_exact",
+        "html_allowed_tags_only",
+        "expected_title_normalized",
+        "predicted_title_normalized",
+        "expected_description_html",
+        "predicted_description_html",
+        "raw_prediction",
+    ]
+    with path.open("w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
+        writer.writeheader()
+        for row in rows:
+            writer.writerow({k: row.get(k) for k in fieldnames})
+
+
+if __name__ == "__main__":
+    raise SystemExit(run())
