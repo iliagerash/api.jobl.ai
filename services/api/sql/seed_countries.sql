@@ -1,0 +1,47 @@
+-- Seed ISO country names used by normalization and lookup joins.
+-- Safe to re-run.
+
+INSERT INTO countries (code, name, alternate_names)
+VALUES
+    ('AE', 'United Arab Emirates', ARRAY['UAE']::text[]),
+    ('AR', 'Argentina', NULL::text[]),
+    ('AT', 'Austria', NULL::text[]),
+    ('AU', 'Australia', NULL::text[]),
+    ('BE', 'Belgium', ARRAY['Belgique', 'Belgiën']::text[]),
+    ('BR', 'Brazil', ARRAY['Brasil']::text[]),
+    ('CA', 'Canada', NULL::text[]),
+    ('CH', 'Switzerland', ARRAY['Schweiz', 'Suisse']::text[]),
+    ('CL', 'Chile', NULL::text[]),
+    ('CO', 'Colombia', NULL::text[]),
+    ('CR', 'Costa Rica', NULL::text[]),
+    ('DE', 'Germany', ARRAY['Deutschland']::text[]),
+    ('DK', 'Denmark', ARRAY['Danmark']::text[]),
+    ('EC', 'Ecuador', NULL::text[]),
+    ('ES', 'Spain', ARRAY['España']::text[]),
+    ('FR', 'France', NULL::text[]),
+    ('GB', 'United Kingdom', ARRAY['UK', 'Great Britain']::text[]),
+    ('GR', 'Greece', ARRAY['Ελλάδα']::text[]),
+    ('GT', 'Guatemala', NULL::text[]),
+    ('ID', 'Indonesia', NULL::text[]),
+    ('IN', 'India', ARRAY['Bharat']::text[]),
+    ('IT', 'Italy', ARRAY['Italia']::text[]),
+    ('MX', 'Mexico', ARRAY['México']::text[]),
+    ('MY', 'Malaysia', NULL::text[]),
+    ('NG', 'Nigeria', NULL::text[]),
+    ('NL', 'Netherlands', ARRAY['Nederland']::text[]),
+    ('NZ', 'New Zealand', NULL::text[]),
+    ('PA', 'Panama', ARRAY['Panamá']::text[]),
+    ('PE', 'Peru', ARRAY['Perú']::text[]),
+    ('PH', 'Philippines', NULL::text[]),
+    ('PK', 'Pakistan', NULL::text[]),
+    ('PT', 'Portugal', NULL::text[]),
+    ('SA', 'Saudi Arabia', NULL::text[]),
+    ('SG', 'Singapore', NULL::text[]),
+    ('UA', 'Ukraine', ARRAY['Україна']::text[]),
+    ('US', 'United States', ARRAY['USA', 'U.S.']::text[]),
+    ('UY', 'Uruguay', NULL::text[]),
+    ('VE', 'Venezuela', NULL::text[]),
+    ('ZA', 'South Africa', NULL::text[])
+ON CONFLICT (code) DO UPDATE
+SET name = EXCLUDED.name,
+    alternate_names = EXCLUDED.alternate_names;

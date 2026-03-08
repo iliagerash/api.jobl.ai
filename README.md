@@ -6,6 +6,7 @@ Backend monorepo for Jobl AI services.
 
 - `services/api`: FastAPI service, SQLAlchemy models, Alembic migrations.
 - `services/sync`: scraper ingestion worker (fetch + export marking + upsert pipeline).
+- `services/normalize`: backlog normalization worker for processed text fields.
 - `services/llm`: LLM-focused workers/pipelines (separate from HTTP API).
 - `libs/common`: shared Python utilities used across services.
 
@@ -46,6 +47,16 @@ Install optional dev dependencies (inside `services/api` or `services/sync`):
 pip install -e ".[dev]"
 ```
 
+Install normalize dependencies:
+
+```bash
+cd /home/<user>/Jobl/api.jobl.ai/services/normalize
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install -e .
+```
+
 ## FastAPI bootstrap
 
 ```bash
@@ -68,10 +79,18 @@ alembic revision -m "init"
 alembic upgrade head
 ```
 
-## Seed source countries
+To apply latest schema/index changes (including `jobs_active` view, normalization backlog index, and countries lookup):
+
+```bash
+cd services/api
+alembic upgrade head
+```
+
+## Seed lookup tables
 
 Seeder SQL file:
 - `services/api/sql/seed_source_countries.sql`
+- `services/api/sql/seed_countries.sql`
 
 Current seed data:
 - `db_name = 'americas'`
@@ -86,6 +105,7 @@ Behavior:
 ```bash
 cd services/api
 psql "$DATABASE_URL" -f sql/seed_source_countries.sql
+psql "$DATABASE_URL" -f sql/seed_countries.sql
 ```
 
 ## Sync worker bootstrap
@@ -99,6 +119,18 @@ pip install -e ../../libs/common
 pip install -e .
 cp .env.example .env
 jobl-sync
+```
+
+## Normalize worker bootstrap
+
+```bash
+cd services/normalize
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install -e .
+cp .env.example .env
+jobl-normalize --batch-size=2000
 ```
 
 ## Related repositories

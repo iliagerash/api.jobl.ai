@@ -1,0 +1,32 @@
+[project]
+name = "jobl-normalize"
+version = "0.1.0"
+description = "Job normalization worker for title/description fields"
+requires-python = ">=3.11"
+dependencies = [
+  "sqlalchemy>=2.0.43",
+  "psycopg[binary]>=3.2.9",
+  "pydantic-settings>=2.10.1",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.4.0",
+]
+
+[project.scripts]
+jobl-normalize = "app.main:run"
+jobl-normalize-sample = "app.sample_builder:run"
+jobl-normalize-eval = "app.eval_runner:run"
+jobl-normalize-ml-title = "app.ml_title_runner:run"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]
