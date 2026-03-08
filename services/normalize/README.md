@@ -97,29 +97,34 @@ OPENAI_BATCH_POLL_SECONDS=15
 LLM_PROMPT_VERSION="v1"
 ```
 
-Label pending rows for one batch (OpenAI Batch API is default):
+Label next pending rows and set a processing tag (OpenAI Batch API is default):
 
 ```bash
-jobl-normalize-llm-label --batch-tag=eval_v1 --limit=500
+jobl-normalize-llm-label --batch-tag=train_v1_0001 --limit=1000
+```
+
+Resume polling/apply for an already submitted OpenAI batch:
+
+```bash
+jobl-normalize-llm-label --batch-id=batch_xxx --batch-tag=train_v1_0001
 ```
 
 Disable batch mode and run one-by-one requests:
 
 ```bash
-jobl-normalize-llm-label --batch-tag=eval_v1 --limit=200 --no-batch
+jobl-normalize-llm-label --batch-tag=train_v1_0001 --limit=200 --no-batch
 ```
 
-Continue from a row id:
+Debug direct mode (full prompt + full raw response):
 
 ```bash
-jobl-normalize-llm-label --batch-tag=eval_v1 --from-id=30000 --limit=1000
+jobl-normalize-llm-label --batch-tag=train_v1_debug --limit=20 --no-batch --debug
 ```
 
-Overwrite existing expected labels:
-
-```bash
-jobl-normalize-llm-label --batch-tag=eval_v1 --overwrite --limit=500
-```
+Notes:
+- `--batch-tag` now writes/overwrites `normalization_samples.batch_tag` for processed rows.
+- selection is driven by `--limit` over unprocessed rows only (not by existing batch tag).
+- `--batch-id` resumes a previously submitted batch and applies its output to matching `normalization_samples.id` rows.
 
 ## ML-only title normalization
 

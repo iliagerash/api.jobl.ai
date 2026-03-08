@@ -27,7 +27,10 @@ Rules:
 - title_normalized: cleaned role title only, no location/company/salary/date noise.
 - description_html: clean HTML description.
   Remove style/script/noise. Keep semantic content.
-  Allowed tags only: <p>, <ul>, <ol>, <li>, <i>, <b>, <em>, <strong>, <h2>, <h3>, <h4>, <br>.
+  Allowed tags only: <p>, <ul>, <ol>, <li>, <i>, <b>, <em>, <strong>, <u>, <h2>, <h3>, <h4>, <br>, <a>.
+  Remove job-title repetition at the beginning of description_html.
+  If the first heading/paragraph is just the same as title_normalized (or a close variant), drop it.
+  Example to remove: <p><strong>Security Business Partner</strong></p> when title_normalized is "Security Business Partner".
   Do not rewrite meaning and do not invent content.
 - If uncertain, preserve information instead of hallucinating.
 
@@ -58,20 +61,20 @@ RESPONSE_JSON_SCHEMA = {
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Label normalization_samples with OpenAI LLM output")
-    parser.add_argument("--batch-tag", type=str, default=None, help="Process only one batch_tag")
+    parser.add_argument("--batch-tag", type=str, default=None, help="Set/overwrite batch_tag for processed rows")
+    parser.add_argument("--batch-id", type=str, default=None, help="Resume polling and apply an existing OpenAI batch id")
     parser.add_argument("--limit", type=int, default=200, help="Maximum rows to process in this run")
     parser.add_argument("--batch-size", type=int, default=20, help="Rows fetched per DB query page in --no-batch mode")
-    parser.add_argument(
-        "--overwrite",
-        action="store_true",
-        help="Overwrite rows even if expected_* columns are already filled",
-    )
     parser.add_argument(
         "--no-batch",
         action="store_true",
         help="Disable OpenAI Batch API and run one-by-one requests",
     )
-    parser.add_argument("--from-id", type=int, default=0, help="Start from normalization_samples.id > value")
+    parser.add_argument(
+        "--debug",
+        action="store_true",
+        help="Print full prompt and full raw response (only with --no-batch)",
+    )
     return parser.parse_args()
 
 
@@ -81,40 +84,48 @@ def run() -> None:
 
     if not settings.openai_api_key:
         raise SystemExit("OPENAI_API_KEY is required for jobl-normalize-llm-label")
+    if args.debug and not args.no_batch:
+        raise SystemExit("--debug is supported only with --no-batch")
+    if args.batch_id and args.no_batch:
+        raise SystemExit("--batch-id cannot be used with --no-batch")
 
     client = OpenAI(api_key=settings.openai_api_key, timeout=settings.openai_timeout_seconds)
     engine = create_engine(settings.target_database_url, pool_pre_ping=True)
     logger.info(
-        "llm label started mode=%s model=%s prompt_version=%s limit=%s batch_size=%s overwrite=%s batch_tag=%s from_id=%s",
-        "direct" if args.no_batch else "batch",
+        "llm label started mode=%s model=%s prompt_version=%s limit=%s batch_size=%s overwrite=%s batch_tag=%s batch_id=%s",
+        "resume" if args.batch_id else ("direct" if args.no_batch else "batch"),
         settings.openai_model,
         settings.llm_prompt_version,
         args.limit,
         args.batch_size,
-        args.overwrite,
+        False,
         args.batch_tag,
-        args.from_id,
+        args.batch_id,
     )
 
     try:
-        if args.no_batch:
+        if args.batch_id:
+            processed, updated = _resume_existing_batch(
+                engine=engine,
+                client=client,
+                batch_id=args.batch_id,
+                write_batch_tag=args.batch_tag,
+            )
+        elif args.no_batch:
             processed, updated = _run_direct_mode(
                 engine=engine,
                 client=client,
-                batch_tag=args.batch_tag,
+                write_batch_tag=args.batch_tag,
                 limit=args.limit,
                 batch_size=args.batch_size,
-                from_id=args.from_id,
-                overwrite=args.overwrite,
+                debug=args.debug,
             )
         else:
             processed, updated = _run_batch_mode(
                 engine=engine,
                 client=client,
-                batch_tag=args.batch_tag,
+                write_batch_tag=args.batch_tag,
                 limit=args.limit,
-                from_id=args.from_id,
-                overwrite=args.overwrite,
             )
     finally:
         engine.dispose()
@@ -126,38 +137,33 @@ def _run_direct_mode(
     *,
     engine,
     client: OpenAI,
-    batch_tag: str | None,
+    write_batch_tag: str | None,
     limit: int,
     batch_size: int,
-    from_id: int,
-    overwrite: bool,
+    debug: bool,
 ) -> tuple[int, int]:
     processed = 0
     updated = 0
-    cursor = from_id
 
     while processed < limit:
         remaining = limit - processed
         fetch_size = min(batch_size, remaining)
         rows = _fetch_rows(
             engine=engine,
-            batch_tag=batch_tag,
             limit=fetch_size,
-            from_id=cursor,
-            overwrite=overwrite,
         )
         if not rows:
             break
 
         payload: list[dict[str, Any]] = []
         for row in rows:
-            result = _label_row_direct(client=client, row=row)
-            payload.append(_result_to_db_payload(row=row, result=result))
+            result = _label_row_direct(client=client, row=row, debug=debug)
+            payload.append(_result_to_db_payload(row=row, result=result, write_batch_tag=write_batch_tag))
 
         _update_rows(engine=engine, payload=payload)
         processed += len(rows)
         updated += len(payload)
-        cursor = int(rows[-1]["id"])
+        last_id = int(rows[-1]["id"])
 
         logger.info(
             "llm label progress mode=direct fetched=%s updated=%s total_processed=%s/%s last_id=%s",
@@ -165,7 +171,7 @@ def _run_direct_mode(
             len(payload),
             processed,
             limit,
-            cursor,
+            last_id,
         )
     return processed, updated
 
@@ -174,17 +180,12 @@ def _run_batch_mode(
     *,
     engine,
     client: OpenAI,
-    batch_tag: str | None,
+    write_batch_tag: str | None,
     limit: int,
-    from_id: int,
-    overwrite: bool,
 ) -> tuple[int, int]:
     rows = _fetch_rows(
         engine=engine,
-        batch_tag=batch_tag,
         limit=limit,
-        from_id=from_id,
-        overwrite=overwrite,
     )
     if not rows:
         logger.info("no rows selected for batch labeling")
@@ -231,7 +232,7 @@ def _run_batch_mode(
             for row in rows:
                 try:
                     direct_result = _label_row_direct(client=client, row=row)
-                    payload.append(_result_to_db_payload(row=row, result=direct_result))
+                    payload.append(_result_to_db_payload(row=row, result=direct_result, write_batch_tag=write_batch_tag))
                 except Exception:  # noqa: BLE001
                     logger.exception("direct fallback failed id=%s", row.get("id"))
             _update_rows(engine=engine, payload=payload)
@@ -256,7 +257,7 @@ def _run_batch_mode(
         if result is None:
             failed_ids.add(row_id)
             continue
-        payload.append(_result_to_db_payload(row=row, result=result))
+        payload.append(_result_to_db_payload(row=row, result=result, write_batch_tag=write_batch_tag))
 
     # Any rows not present in output are also treated as failed and retried directly.
     for row_id in row_map:
@@ -269,7 +270,7 @@ def _run_batch_mode(
             row = row_map[row_id]
             try:
                 direct_result = _label_row_direct(client=client, row=row)
-                payload.append(_result_to_db_payload(row=row, result=direct_result))
+                payload.append(_result_to_db_payload(row=row, result=direct_result, write_batch_tag=write_batch_tag))
             except Exception:  # noqa: BLE001
                 logger.exception("direct retry failed id=%s", row_id)
 
@@ -283,25 +284,71 @@ def _run_batch_mode(
     return len(rows), len(payload)
 
 
+def _resume_existing_batch(
+    *,
+    engine,
+    client: OpenAI,
+    batch_id: str,
+    write_batch_tag: str | None,
+) -> tuple[int, int]:
+    batch = client.batches.retrieve(batch_id)
+    terminal = {"completed", "failed", "expired", "cancelled"}
+
+    while batch.status not in terminal:
+        time.sleep(max(1, settings.openai_batch_poll_seconds))
+        batch = client.batches.retrieve(batch.id)
+        counts = getattr(batch, "request_counts", None)
+        completed = counts.get("completed") if isinstance(counts, dict) else getattr(counts, "completed", None)
+        failed = counts.get("failed") if isinstance(counts, dict) else getattr(counts, "failed", None)
+        logger.info(
+            "batch polling batch_id=%s status=%s completed=%s failed=%s",
+            batch.id,
+            batch.status,
+            completed,
+            failed,
+        )
+
+    if batch.status != "completed" or not batch.output_file_id:
+        logger.warning("resumed batch not completed status=%s batch_id=%s", batch.status, batch.id)
+        return 0, 0
+
+    output_resp = client.files.content(batch.output_file_id)
+    output_text = _file_content_to_text(output_resp)
+    results = _parse_batch_output_lines(output_text)
+
+    result_ids = sorted(int(row_id) for row_id in results)
+    rows = _fetch_rows_by_ids(engine=engine, ids=result_ids)
+    row_map = {str(row["id"]): row for row in rows}
+
+    payload: list[dict[str, Any]] = []
+    for row_id, result in results.items():
+        row = row_map.get(row_id)
+        if not row or result is None:
+            continue
+        payload.append(_result_to_db_payload(row=row, result=result, write_batch_tag=write_batch_tag))
+
+    _update_rows(engine=engine, payload=payload)
+    logger.info(
+        "llm label progress mode=resume fetched=%s updated=%s failed=%s",
+        len(rows),
+        len(payload),
+        max(0, len(rows) - len(payload)),
+    )
+    return len(rows), len(payload)
+
+
 def _fetch_rows(
     engine,
-    batch_tag: str | None,
     limit: int,
-    from_id: int,
-    overwrite: bool,
 ) -> list[dict[str, Any]]:
-    where = ["ns.id > :from_id"]
-    params: dict[str, Any] = {"from_id": from_id, "limit_rows": limit}
-    if batch_tag:
-        where.append("ns.batch_tag = :batch_tag")
-        params["batch_tag"] = batch_tag
-    if not overwrite:
-        where.append(
-            "("
-            "ns.expected_title_normalized IS NULL OR "
-            "ns.expected_description_html IS NULL"
-            ")"
-        )
+    where = ["1=1"]
+    params: dict[str, Any] = {"limit_rows": limit}
+    where.append(
+        "("
+        "ns.expected_title_normalized IS NULL OR "
+        "ns.expected_description_html IS NULL"
+        ")"
+    )
 
     query = text(
         f"""
@@ -326,7 +373,33 @@ def _fetch_rows(
         return [dict(row) for row in rows]
 
 
-def _label_row_direct(client: OpenAI, row: dict[str, Any]) -> dict[str, str]:
+def _fetch_rows_by_ids(engine, ids: list[int]) -> list[dict[str, Any]]:
+    if not ids:
+        return []
+
+    query = text(
+        """
+        SELECT
+            ns.id,
+            ns.title_raw,
+            ns.description_raw,
+            ns.country_code,
+            ns.language_code,
+            ns.country_name,
+            ns.city_title,
+            ns.region_title,
+            ns.review_notes
+        FROM normalization_samples ns
+        WHERE ns.id = ANY(:ids)
+        ORDER BY ns.id
+        """
+    )
+    with engine.connect() as conn:
+        rows = conn.execute(query, {"ids": ids}).mappings()
+        return [dict(row) for row in rows]
+
+
+def _label_row_direct(client: OpenAI, row: dict[str, Any], debug: bool = False) -> dict[str, str]:
     user_payload = {
         "prompt_version": settings.llm_prompt_version,
         "title_raw": row.get("title_raw") or "",
@@ -341,6 +414,13 @@ def _label_row_direct(client: OpenAI, row: dict[str, Any]) -> dict[str, str]:
     }
 
     content = ""
+    if debug:
+        logger.info(
+            "LLM DEBUG REQUEST id=%s\nSYSTEM:\n%s\nUSER:\n%s",
+            row.get("id"),
+            SYSTEM_PROMPT,
+            json.dumps(user_payload, ensure_ascii=False, indent=2),
+        )
     for attempt in range(1, settings.openai_max_retries + 1):
         try:
             resp = client.chat.completions.create(
@@ -352,6 +432,8 @@ def _label_row_direct(client: OpenAI, row: dict[str, Any]) -> dict[str, str]:
                 response_format=RESPONSE_JSON_SCHEMA,
             )
             content = (resp.choices[0].message.content or "").strip()
+            if debug:
+                logger.info("LLM DEBUG RESPONSE id=%s\n%s", row.get("id"), content)
             parsed = _parse_json(content)
             result = _validated_result_or_none(parsed)
             if result is None:
@@ -423,6 +505,7 @@ def _update_rows(engine, payload: list[dict[str, Any]]) -> None:
         UPDATE normalization_samples
         SET expected_title_normalized = :expected_title_normalized,
             expected_description_html = :expected_description_html,
+            batch_tag = COALESCE(:batch_tag, batch_tag),
             review_notes = :review_notes,
             updated_at = NOW()
         WHERE id = :id
@@ -432,11 +515,17 @@ def _update_rows(engine, payload: list[dict[str, Any]]) -> None:
         conn.execute(query, payload)
 
 
-def _result_to_db_payload(*, row: dict[str, Any], result: dict[str, str]) -> dict[str, Any]:
+def _result_to_db_payload(
+    *,
+    row: dict[str, Any],
+    result: dict[str, str],
+    write_batch_tag: str | None,
+) -> dict[str, Any]:
     return {
         "id": row["id"],
         "expected_title_normalized": result["title_normalized"],
         "expected_description_html": result["description_html"],
+        "batch_tag": write_batch_tag,
         "review_notes": _merge_review_notes(
             existing=row.get("review_notes"),
             model=settings.openai_model,
