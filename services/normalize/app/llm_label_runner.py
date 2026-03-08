@@ -78,7 +78,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run() -> None:
+def run() -> int:
     args = parse_args()
     configure_logging(settings.log_level)
 
@@ -104,33 +104,38 @@ def run() -> None:
     )
 
     try:
-        if args.batch_id:
-            processed, updated = _resume_existing_batch(
-                engine=engine,
-                client=client,
-                batch_id=args.batch_id,
-                write_batch_tag=args.batch_tag,
-            )
-        elif args.no_batch:
-            processed, updated = _run_direct_mode(
-                engine=engine,
-                client=client,
-                write_batch_tag=args.batch_tag,
-                limit=args.limit,
-                batch_size=args.batch_size,
-                debug=args.debug,
-            )
-        else:
-            processed, updated = _run_batch_mode(
-                engine=engine,
-                client=client,
-                write_batch_tag=args.batch_tag,
-                limit=args.limit,
-            )
+        try:
+            if args.batch_id:
+                processed, updated = _resume_existing_batch(
+                    engine=engine,
+                    client=client,
+                    batch_id=args.batch_id,
+                    write_batch_tag=args.batch_tag,
+                )
+            elif args.no_batch:
+                processed, updated = _run_direct_mode(
+                    engine=engine,
+                    client=client,
+                    write_batch_tag=args.batch_tag,
+                    limit=args.limit,
+                    batch_size=args.batch_size,
+                    debug=args.debug,
+                )
+            else:
+                processed, updated = _run_batch_mode(
+                    engine=engine,
+                    client=client,
+                    write_batch_tag=args.batch_tag,
+                    limit=args.limit,
+                )
+        except KeyboardInterrupt:
+            logger.warning("interrupted by user (Ctrl+C), exiting gracefully")
+            return 130
     finally:
         engine.dispose()
 
     logger.info("llm label completed processed=%s updated=%s", processed, updated)
+    return 0
 
 
 def _run_direct_mode(

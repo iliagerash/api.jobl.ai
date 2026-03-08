@@ -26,20 +26,25 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run() -> None:
+def run() -> int:
     args = parse_args()
     configure_logging("INFO")
 
-    if args.text:
-        print(NormalizeWorker.normalize_title_for_ml(args.text))
-        return
+    try:
+        if args.text:
+            print(NormalizeWorker.normalize_title_for_ml(args.text))
+            return 0
 
-    if not args.input_csv or not args.output_csv:
-        raise SystemExit("Either --text or (--input-csv and --output-csv) must be provided")
+        if not args.input_csv or not args.output_csv:
+            raise SystemExit("Either --text or (--input-csv and --output-csv) must be provided")
 
-    input_path = Path(args.input_csv)
-    output_path = Path(args.output_csv)
-    _run_csv(input_path=input_path, output_path=output_path, title_column=args.title_column)
+        input_path = Path(args.input_csv)
+        output_path = Path(args.output_csv)
+        _run_csv(input_path=input_path, output_path=output_path, title_column=args.title_column)
+    except KeyboardInterrupt:
+        logger.warning("interrupted by user (Ctrl+C), exiting gracefully")
+        return 130
+    return 0
 
 
 def _run_csv(input_path: Path, output_path: Path, title_column: str) -> None:

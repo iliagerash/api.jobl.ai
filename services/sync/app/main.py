@@ -20,7 +20,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run() -> None:
+def run() -> int:
     args = parse_args()
     only_dbs = set(args.dbs or [])
     configure_logging(settings.log_level)
@@ -41,13 +41,18 @@ def run() -> None:
     )
     if only_dbs:
         logger.info("db filter enabled dbs=%s", ",".join(sorted(only_dbs)))
-    result = worker.run_once(batch_size=settings.sync_batch_size, only_dbs=only_dbs)
+    try:
+        result = worker.run_once(batch_size=settings.sync_batch_size, only_dbs=only_dbs)
+    except KeyboardInterrupt:
+        logger.warning("interrupted by user (Ctrl+C), exiting gracefully")
+        return 130
     logger.info(
         "sync run completed fetched=%s upserted=%s marked_exported=%s",
         result.fetched,
         result.upserted,
         result.marked_exported,
     )
+    return 0
 
 
 if __name__ == "__main__":

@@ -17,7 +17,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run() -> None:
+def run() -> int:
     args = parse_args()
     batch_size = args.batch_size or settings.normalize_batch_size
 
@@ -30,17 +30,22 @@ def run() -> None:
         args.max_batches,
         args.from_id,
     )
-    result = worker.run(
-        batch_size=batch_size,
-        max_batches=args.max_batches,
-        from_id=args.from_id,
-    )
+    try:
+        result = worker.run(
+            batch_size=batch_size,
+            max_batches=args.max_batches,
+            from_id=args.from_id,
+        )
+    except KeyboardInterrupt:
+        logger.warning("interrupted by user (Ctrl+C), exiting gracefully")
+        return 130
     logger.info(
         "normalize run completed batches=%s scanned=%s updated=%s",
         result.batches,
         result.scanned,
         result.updated,
     )
+    return 0
 
 
 if __name__ == "__main__":

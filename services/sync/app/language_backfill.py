@@ -20,7 +20,7 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def run() -> None:
+def run() -> int:
     args = parse_args()
     configure_logging(settings.log_level)
 
@@ -39,51 +39,56 @@ def run() -> None:
     )
 
     try:
-        while True:
-            if limit is not None and processed >= limit:
-                break
-
-            batch_size = args.batch_size
-            if limit is not None:
-                batch_size = min(batch_size, limit - processed)
-                if batch_size <= 0:
+        try:
+            while True:
+                if limit is not None and processed >= limit:
                     break
 
-            rows = _fetch_rows(engine=engine, from_id=cursor, batch_size=batch_size, overwrite=args.overwrite)
-            if not rows:
-                break
+                batch_size = args.batch_size
+                if limit is not None:
+                    batch_size = min(batch_size, limit - processed)
+                    if batch_size <= 0:
+                        break
 
-            payload = []
-            for row in rows:
-                detected = detect_language_code(
-                    title=row.get("title"),
-                    description=row.get("description"),
-                    country_code=row.get("country_code"),
-                    source_db=row.get("source_db"),
+                rows = _fetch_rows(engine=engine, from_id=cursor, batch_size=batch_size, overwrite=args.overwrite)
+                if not rows:
+                    break
+
+                payload = []
+                for row in rows:
+                    detected = detect_language_code(
+                        title=row.get("title"),
+                        description=row.get("description"),
+                        country_code=row.get("country_code"),
+                        source_db=row.get("source_db"),
+                    )
+                    payload.append(
+                        {
+                            "id": row["id"],
+                            "language_code": detected.language_code,
+                        }
+                    )
+
+                _update_rows(engine=engine, payload=payload)
+
+                processed += len(rows)
+                updated += len(payload)
+                cursor = int(rows[-1]["id"])
+                logger.info(
+                    "language backfill progress batch=%s processed=%s updated=%s last_id=%s",
+                    len(rows),
+                    processed,
+                    updated,
+                    cursor,
                 )
-                payload.append(
-                    {
-                        "id": row["id"],
-                        "language_code": detected.language_code,
-                    }
-                )
-
-            _update_rows(engine=engine, payload=payload)
-
-            processed += len(rows)
-            updated += len(payload)
-            cursor = int(rows[-1]["id"])
-            logger.info(
-                "language backfill progress batch=%s processed=%s updated=%s last_id=%s",
-                len(rows),
-                processed,
-                updated,
-                cursor,
-            )
+        except KeyboardInterrupt:
+            logger.warning("interrupted by user (Ctrl+C), exiting gracefully")
+            return 130
     finally:
         engine.dispose()
 
     logger.info("language backfill completed processed=%s updated=%s", processed, updated)
+    return 0
 
 
 def _fetch_rows(engine, from_id: int, batch_size: int, overwrite: bool) -> list[dict[str, object | None]]:
