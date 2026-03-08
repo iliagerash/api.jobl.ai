@@ -109,6 +109,9 @@ Arguments:
 - `--model`: HF base model id (default `Qwen/Qwen2.5-3B-Instruct`).
 - `--out-dir`: training output directory.
 - `--epochs`, `--batch-size`, `--grad-accum`, `--lr`, `--max-seq-len`: training hyperparameters.
+- `--memory-safe`: CPU-safe profile for low-memory hosts.
+  On CPU it switches default 3B model to `Qwen/Qwen2.5-0.5B-Instruct`, forces `batch_size=1`,
+  increases gradient accumulation, caps sequence length, and limits epochs for first pilot.
 
 Outputs:
 - Trainer checkpoints under `--out-dir`.
@@ -127,6 +130,12 @@ jobl-training-train-lora \
   --grad-accum=8 \
   --lr=2e-4 \
   --max-seq-len=2048
+```
+
+Memory-safe run (recommended on 32GB RAM CPU host):
+
+```bash
+jobl-training-train-lora --memory-safe
 ```
 
 ## End-to-end quick run

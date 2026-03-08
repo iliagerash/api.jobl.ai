@@ -28,6 +28,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--grad-accum", type=int, default=8, help="Gradient accumulation steps")
     parser.add_argument("--lr", type=float, default=2e-4, help="Learning rate")
     parser.add_argument("--max-seq-len", type=int, default=2048, help="Max sequence length")
+    parser.add_argument(
+        "--memory-safe",
+        action="store_true",
+        help="Use CPU-safe defaults (smaller model, shorter seq len, smaller batches)",
+    )
     return parser.parse_args()
 
 
@@ -55,15 +60,22 @@ def _train(args: argparse.Namespace) -> None:
             "Training dependencies are missing. Install with: pip install -e '.[train]'"
         ) from exc
 
+    has_cuda = torch.cuda.is_available()
+    args = _apply_memory_safe_profile(args, has_cuda=has_cuda)
+
     tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     model = AutoModelForCausalLM.from_pretrained(
         args.model,
-        torch_dtype=torch.bfloat16 if torch.cuda.is_available() else torch.float32,
-        device_map="auto" if torch.cuda.is_available() else None,
+        torch_dtype=torch.bfloat16 if has_cuda else torch.float32,
+        device_map="auto" if has_cuda else None,
+        low_cpu_mem_usage=True,
     )
+    model.config.use_cache = False
+    if hasattr(model, "gradient_checkpointing_enable"):
+        model.gradient_checkpointing_enable()
 
     train_ds = load_dataset("json", data_files=args.train_jsonl, split="train")
     val_ds = load_dataset("json", data_files=args.val_jsonl, split="train")
@@ -89,10 +101,12 @@ def _train(args: argparse.Namespace) -> None:
         "save_strategy": "steps",
         "save_steps": 100,
         "save_total_limit": 2,
-        "bf16": torch.cuda.is_available(),
+        "bf16": has_cuda,
         "fp16": False,
         "report_to": [],
         "remove_unused_columns": False,
+        "dataloader_pin_memory": has_cuda,
+        "gradient_checkpointing": True,
     }
     ta_params = inspect.signature(TrainingArguments.__init__).parameters
     if "evaluation_strategy" in ta_params:
@@ -132,11 +146,15 @@ def _train(args: argparse.Namespace) -> None:
     trainer = SFTTrainer(**trainer_kwargs)
 
     logger.info(
-        "training started model=%s train_rows=%s val_rows=%s out=%s",
+        "training started model=%s train_rows=%s val_rows=%s out=%s batch_size=%s grad_accum=%s max_seq_len=%s memory_safe=%s",
         args.model,
         len(train_ds),
         len(val_ds),
         args.out_dir,
+        args.batch_size,
+        args.grad_accum,
+        args.max_seq_len,
+        args.memory_safe,
     )
     trainer.train()
     trainer.model.save_pretrained(Path(args.out_dir) / "adapter")
@@ -175,6 +193,34 @@ def _with_text_column(ds):
         lambda batch: {"text": _formatting_func({"messages": batch["messages"]})},
         batched=True,
     )
+
+
+def _apply_memory_safe_profile(args: argparse.Namespace, *, has_cuda: bool) -> argparse.Namespace:
+    if not args.memory_safe:
+        if not has_cuda:
+            logger.warning(
+                "No CUDA device detected. Training on CPU may run out of memory with model=%s; "
+                "retry with --memory-safe.",
+                args.model,
+            )
+        return args
+
+    # Conservative defaults for 32GB RAM CPU hosts.
+    if not has_cuda and args.model == "Qwen/Qwen2.5-3B-Instruct":
+        args.model = "Qwen/Qwen2.5-0.5B-Instruct"
+    args.batch_size = 1
+    args.grad_accum = max(args.grad_accum, 16)
+    args.max_seq_len = min(args.max_seq_len, 1024)
+    args.epochs = min(args.epochs, 1.0)
+    logger.info(
+        "memory-safe profile applied model=%s batch_size=%s grad_accum=%s max_seq_len=%s epochs=%s",
+        args.model,
+        args.batch_size,
+        args.grad_accum,
+        args.max_seq_len,
+        args.epochs,
+    )
+    return args
 
 
 if __name__ == "__main__":
