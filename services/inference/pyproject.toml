@@ -1,0 +1,30 @@
+[project]
+name = "jobl-inference"
+version = "0.1.0"
+description = "Inference and benchmarking tools for Jobl mini-LLM"
+requires-python = ">=3.11"
+dependencies = [
+  "pydantic-settings>=2.10.1",
+  "torch>=2.7.0",
+  "transformers>=4.52.0",
+  "peft>=0.15.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.4.0",
+]
+
+[project.scripts]
+jobl-infer-benchmark = "app.benchmark_runner:run"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["app*"]

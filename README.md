@@ -8,6 +8,7 @@ Backend monorepo for Jobl AI services.
 - `services/sync`: scraper ingestion worker (fetch + export marking + upsert pipeline).
 - `services/normalize`: backlog normalization worker for processed text fields.
 - `services/training`: dataset preparation and LoRA training helpers for mini-LLM.
+- `services/inference`: latency benchmarking tools for local model serving configs.
 - `services/llm`: LLM-focused workers/pipelines (separate from HTTP API).
 - `libs/common`: shared Python utilities used across services.
 
@@ -62,6 +63,16 @@ Install training dependencies:
 
 ```bash
 cd /home/<user>/Jobl/api.jobl.ai/services/training
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -U pip
+pip install -e .
+```
+
+Install inference benchmark dependencies:
+
+```bash
+cd /home/<user>/Jobl/api.jobl.ai/services/inference
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -U pip
@@ -173,6 +184,15 @@ jobl-training-export --out=data/raw/labeled.jsonl --limit=1000
 jobl-training-split --in=data/raw/labeled.jsonl --out-dir=data/splits
 jobl-training-build-jsonl --in=data/splits/train.jsonl --out=data/sft/train.jsonl
 jobl-training-build-jsonl --in=data/splits/val.jsonl --out=data/sft/val.jsonl
+```
+
+## Inference speed benchmark
+
+```bash
+cd /home/<user>/Jobl/api.jobl.ai/services/inference
+source .venv/bin/activate
+jobl-infer-benchmark --task=title --limit=50 --warmup=3 --progress-every=1
+jobl-infer-benchmark --task=full --limit=30 --warmup=2 --progress-every=1
 ```
 
 ## Related repositories
