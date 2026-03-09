@@ -36,6 +36,7 @@ TAG_RE = re.compile(r"<\s*/?\s*([a-zA-Z0-9]+)")
 FIELD_RE = {
     "title_normalized": re.compile(r'"title_normalized"\s*:\s*"((?:\\.|[^"\\])*)"', re.DOTALL),
     "description_html": re.compile(r'"description_html"\s*:\s*"((?:\\.|[^"\\])*)"', re.DOTALL),
+    "description_html_chunk": re.compile(r'"description_html_chunk"\s*:\s*"((?:\\.|[^"\\])*)"', re.DOTALL),
 }
 
 
@@ -375,6 +376,21 @@ def _predict_row_chunked(
         p = dict(user_payload)
         p["description_raw"] = chunk
         p["chunk_context"] = {"index": idx, "total": len(chunks)}
+        if idx == 1:
+            p["response_schema"] = {
+                "title_normalized": "string",
+                "description_html_chunk": "string",
+            }
+            p["response_rules"] = [
+                "Return valid JSON only.",
+                "For this first chunk include title_normalized and description_html_chunk.",
+            ]
+        else:
+            p["response_schema"] = {"description_html_chunk": "string"}
+            p["response_rules"] = [
+                "Return valid JSON only.",
+                "For this chunk include description_html_chunk only.",
+            ]
         prompts.append(f"<|system|>\n{system}\n<|user|>\n{json.dumps(p, ensure_ascii=False)}\n<|assistant|>\n")
     t_prompt_build += time.perf_counter() - t_prompt
 
@@ -404,10 +420,43 @@ def _predict_row_chunked(
                 maybe_title = str(obj.get("title_normalized") or "").strip()
                 if maybe_title:
                     title = maybe_title
-            maybe_html = str(obj.get("description_html") or "").strip()
+            maybe_html = str(obj.get("description_html_chunk") or obj.get("description_html") or "").strip()
             if maybe_html:
                 html_parts.append(maybe_html)
         t_parse += time.perf_counter() - t_parse0
+
+    if not title:
+        # Fallback: derive title once from title_raw plus short combined description context.
+        title_payload = dict(user_payload)
+        title_payload["description_raw"] = "\n".join(chunks[:2]).strip()
+        title_payload["response_schema"] = {"title_normalized": "string"}
+        title_payload["response_rules"] = [
+            "Return valid JSON only.",
+            "Include only title_normalized.",
+        ]
+        title_prompt = (
+            f"<|system|>\n{system}\n<|user|>\n{json.dumps(title_payload, ensure_ascii=False)}\n<|assistant|>\n"
+        )
+        title_preds, stage_timings = _generate_predictions_batch(
+            model=model,
+            tokenizer=tokenizer,
+            prompts=[title_prompt],
+            device=device,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+            return_timings=True,
+        )
+        t_tokenize += stage_timings["tokenize_sec"]
+        t_generate += stage_timings["generate_sec"]
+        t_decode += stage_timings["decode_sec"]
+        if title_preds:
+            raw_parts.append(title_preds[0])
+            t_parse0 = time.perf_counter()
+            fallback_obj = _parse_json_loose(title_preds[0]) or {}
+            t_parse += time.perf_counter() - t_parse0
+            maybe_title = str(fallback_obj.get("title_normalized") or "").strip()
+            if maybe_title:
+                title = maybe_title
 
     merged = {
         "title_normalized": title,
@@ -555,7 +604,11 @@ def _iter_json_objects(text: str):
 
 def _looks_like_prediction_object(obj: dict[str, Any]) -> bool:
     # Accept if at least one expected key is present; both is preferred.
-    return "title_normalized" in obj or "description_html" in obj
+    return (
+        "title_normalized" in obj
+        or "description_html" in obj
+        or "description_html_chunk" in obj
+    )
 
 
 def _strip_wrappers(text: str) -> str:
