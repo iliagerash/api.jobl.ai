@@ -30,6 +30,10 @@ ALLOWED_TAGS = {
     "a",
 }
 TAG_RE = re.compile(r"<\s*/?\s*([a-zA-Z0-9]+)")
+FIELD_RE = {
+    "title_normalized": re.compile(r'"title_normalized"\s*:\s*"((?:\\.|[^"\\])*)"', re.DOTALL),
+    "description_html": re.compile(r'"description_html"\s*:\s*"((?:\\.|[^"\\])*)"', re.DOTALL),
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -297,6 +301,7 @@ def _parse_json_loose(content: str) -> dict[str, Any] | None:
     text = (content or "").strip()
     if not text:
         return None
+    text = _strip_wrappers(text)
 
     # Prefer JSON objects that look like our target schema.
     for obj in _iter_json_objects(text):
@@ -306,6 +311,11 @@ def _parse_json_loose(content: str) -> dict[str, Any] | None:
     # Fallback: first JSON object if schema-specific object is not found.
     for obj in _iter_json_objects(text):
         return obj
+
+    # Last-resort fallback for near-JSON outputs with trailing/garbled text.
+    recovered = _recover_fields_with_regex(text)
+    if recovered:
+        return recovered
     return None
 
 
@@ -324,6 +334,38 @@ def _iter_json_objects(text: str):
 def _looks_like_prediction_object(obj: dict[str, Any]) -> bool:
     # Accept if at least one expected key is present; both is preferred.
     return "title_normalized" in obj or "description_html" in obj
+
+
+def _strip_wrappers(text: str) -> str:
+    cleaned = text.strip()
+    if cleaned.startswith("```"):
+        cleaned = cleaned.strip("`").strip()
+        if cleaned.lower().startswith("json"):
+            cleaned = cleaned[4:].strip()
+    # Drop common trailing schema/control marker if present.
+    marker = "<|output_json_schema|>"
+    pos = cleaned.find(marker)
+    if pos >= 0:
+        cleaned = cleaned[:pos].strip()
+    return cleaned
+
+
+def _recover_fields_with_regex(text: str) -> dict[str, str] | None:
+    recovered: dict[str, str] = {}
+    for key, regex in FIELD_RE.items():
+        match = regex.search(text)
+        if not match:
+            continue
+        raw = match.group(1)
+        # Decode JSON string escapes safely.
+        try:
+            decoded = json.loads(f'"{raw}"')
+        except json.JSONDecodeError:
+            decoded = raw
+        recovered[key] = str(decoded).strip()
+    if recovered:
+        return recovered
+    return None
 
 
 def _uses_only_allowed_tags(html: str) -> bool:
