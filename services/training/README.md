@@ -123,7 +123,7 @@ Purpose:
 
 Arguments:
 - `--train-jsonl`, `--val-jsonl`: instruction datasets.
-  Defaults: `data/sft/train.jsonl` and `data/sft/val.jsonl`.
+  Defaults: `data/sft_chunks/train.jsonl` and `data/sft_chunks/val.jsonl`.
 - `--model`: HF base model id (default `microsoft/Phi-3-mini-4k-instruct`).
 - `--out-dir`: training output directory.
 - `--epochs`, `--batch-size`, `--grad-accum`, `--lr`, `--max-seq-len`: training hyperparameters.
@@ -140,9 +140,14 @@ Outputs:
 Example:
 
 ```bash
+jobl-training-build-chunks --in=data/sft/train.jsonl --out=data/sft_chunks/train.jsonl --max-chars=3500
+jobl-training-build-chunks --in=data/sft/val.jsonl --out=data/sft_chunks/val.jsonl --max-chars=3500
+
 jobl-training-train-lora
 
 jobl-training-train-lora \
+  --train-jsonl=data/sft_chunks/train.jsonl \
+  --val-jsonl=data/sft_chunks/val.jsonl \
   --model=microsoft/Phi-3-mini-4k-instruct \
   --out-dir=artifacts/lora-normalize-v1 \
   --epochs=2 \
@@ -209,6 +214,8 @@ jobl-training-export --out=data/raw/labeled.jsonl --limit=1000
 jobl-training-split --in=data/raw/labeled.jsonl --out-dir=data/splits
 jobl-training-build-jsonl
 jobl-training-build-jsonl --split=val
+jobl-training-build-chunks --in=data/sft/train.jsonl --out=data/sft_chunks/train.jsonl --max-chars=3500
+jobl-training-build-chunks --in=data/sft/val.jsonl --out=data/sft_chunks/val.jsonl --max-chars=3500
 jobl-training-train-lora
 ```
 

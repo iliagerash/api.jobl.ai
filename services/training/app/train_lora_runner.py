@@ -14,12 +14,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="LoRA SFT pilot training for normalization task")
     parser.add_argument(
         "--train-jsonl",
-        default="data/sft/train.jsonl",
+        default="data/sft_chunks/train.jsonl",
         help="Instruction train JSONL path",
     )
     parser.add_argument(
         "--val-jsonl",
-        default="data/sft/val.jsonl",
+        default="data/sft_chunks/val.jsonl",
         help="Instruction val JSONL path",
     )
     parser.add_argument("--model", default=None, help=f"Base HF model id (default: {DEFAULT_BASE_MODEL})")
@@ -66,6 +66,15 @@ def _train(args: argparse.Namespace) -> None:
     if not args.model:
         args.model = DEFAULT_BASE_MODEL
     args = _apply_memory_safe_profile(args, has_cuda=has_cuda, model_explicit=model_explicit)
+
+    train_path = Path(args.train_jsonl)
+    val_path = Path(args.val_jsonl)
+    if not train_path.exists() or not val_path.exists():
+        raise SystemExit(
+            "Training JSONL not found. Build chunk datasets first: "
+            "jobl-training-build-chunks --in=data/sft/train.jsonl --out=data/sft_chunks/train.jsonl "
+            "and --in=data/sft/val.jsonl --out=data/sft_chunks/val.jsonl"
+        )
 
     tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=True)
     if tokenizer.pad_token is None:

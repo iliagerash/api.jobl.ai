@@ -184,6 +184,9 @@ jobl-training-export --out=data/raw/labeled.jsonl --limit=1000
 jobl-training-split --in=data/raw/labeled.jsonl --out-dir=data/splits
 jobl-training-build-jsonl --in=data/splits/train.jsonl --out=data/sft/train.jsonl
 jobl-training-build-jsonl --in=data/splits/val.jsonl --out=data/sft/val.jsonl
+jobl-training-build-chunks --in=data/sft/train.jsonl --out=data/sft_chunks/train.jsonl --max-chars=3500
+jobl-training-build-chunks --in=data/sft/val.jsonl --out=data/sft_chunks/val.jsonl --max-chars=3500
+jobl-training-train-lora
 ```
 
 ## Inference speed benchmark
