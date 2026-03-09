@@ -281,6 +281,7 @@ def _parse_json_loose(content: str) -> dict[str, Any] | None:
     if not text:
         return None
 
+    decoder = json.JSONDecoder()
     try:
         obj = json.loads(text)
         if isinstance(obj, dict):
@@ -289,15 +290,14 @@ def _parse_json_loose(content: str) -> dict[str, Any] | None:
         pass
 
     start = text.find("{")
-    end = text.rfind("}")
-    if start >= 0 and end > start:
-        candidate = text[start : end + 1]
+    if start >= 0:
+        candidate = text[start:]
         try:
-            obj = json.loads(candidate)
+            obj, _end = decoder.raw_decode(candidate)
             if isinstance(obj, dict):
                 return obj
         except json.JSONDecodeError:
-            return None
+            pass
     return None
 
 
