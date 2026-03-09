@@ -97,6 +97,24 @@ jobl-training-build-jsonl --split=val
 jobl-training-build-jsonl --split=test
 ```
 
+### `jobl-training-build-chunks`
+
+Purpose:
+- Converts SFT JSONL into chunk-level SFT JSONL for long-description training.
+- Keeps full `title_normalized`, splits `description_raw`/`description_html` into chunk pairs.
+
+Arguments:
+- `--in`: input SFT JSONL path (required).
+- `--out`: output chunk-level JSONL path (required).
+- `--max-chars`: target max chars per chunk (default `3500`).
+
+Example:
+
+```bash
+jobl-training-build-chunks --in=data/sft/train.jsonl --out=data/sft_chunks/train.jsonl --max-chars=3500
+jobl-training-build-chunks --in=data/sft/val.jsonl --out=data/sft_chunks/val.jsonl --max-chars=3500
+```
+
 ### `jobl-training-train-lora`
 
 Purpose:
@@ -154,6 +172,8 @@ Arguments:
 - `--limit`: optional max rows to evaluate, `0` means all.
 - `--batch-size`: inference batch size (default `1`). On GPU try `4-16`.
 - `--max-new-tokens`, `--temperature`: inference params.
+- `--chunked`: run chunked inference for long `description_raw`.
+- `--chunk-max-chars`: max chars per input chunk (default `3500`).
 - `--progress-every`: progress log interval in rows (default `10`).
 - `--out-dir`: output artifacts directory (default `artifacts/lora-normalize-v1/eval`).
 
@@ -164,6 +184,8 @@ Metrics:
 - `title_non_empty_rate`
 - `html_non_empty_rate`
 - `html_allowed_tags_only_rate`
+- `title_similarity_avg` / `title_similarity_ge_0_8_rate`
+- `html_text_similarity_avg` / `html_text_similarity_ge_0_8_rate`
 
 Outputs:
 - `summary.json`
@@ -177,6 +199,7 @@ jobl-training-eval-lora
 jobl-training-eval-lora --limit=100 --out-dir=artifacts/lora-normalize-v1/eval_smoke
 jobl-training-eval-lora --progress-every=5
 jobl-training-eval-lora --batch-size=8 --max-new-tokens=256
+jobl-training-eval-lora --chunked --chunk-max-chars=3500 --batch-size=8 --max-new-tokens=1024
 ```
 
 ## End-to-end quick run

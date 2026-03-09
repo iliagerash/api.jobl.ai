@@ -4,9 +4,12 @@ import json
 import logging
 import re
 import time
+from difflib import SequenceMatcher
+from html import unescape
 from pathlib import Path
 from typing import Any
 
+from app.chunking import split_text_chunks
 from app.io_utils import read_jsonl, write_jsonl
 from app.logging import configure_logging
 
@@ -48,6 +51,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=0, help="Max rows to evaluate, 0 means all")
     parser.add_argument("--batch-size", type=int, default=1, help="Inference batch size")
     parser.add_argument("--max-new-tokens", type=int, default=768, help="Generation max_new_tokens")
+    parser.add_argument("--chunked", action="store_true", help="Chunk description_raw during eval inference")
+    parser.add_argument("--chunk-max-chars", type=int, default=3500, help="Max chars per chunk when --chunked")
     parser.add_argument("--temperature", type=float, default=0.0, help="Generation temperature")
     parser.add_argument("--progress-every", type=int, default=10, help="Log progress every N rows")
     parser.add_argument("--out-dir", default="artifacts/lora-normalize-v1/eval", help="Directory for evaluation artifacts")
@@ -111,6 +116,10 @@ def _run_eval(args: argparse.Namespace) -> None:
         "title_non_empty": 0,
         "html_non_empty": 0,
         "html_allowed_tags_only": 0,
+        "title_similarity_sum": 0.0,
+        "html_text_similarity_sum": 0.0,
+        "title_similarity_ge_0_8": 0,
+        "html_text_similarity_ge_0_8": 0,
     }
     mismatches: list[dict[str, Any]] = []
     started_at = time.time()
@@ -120,21 +129,38 @@ def _run_eval(args: argparse.Namespace) -> None:
 
     for offset in range(0, len(rows), batch_size):
         batch_rows = rows[offset : offset + batch_size]
-        prompts = [_build_inference_prompt(row) for row in batch_rows]
-        preds = _generate_predictions_batch(
-            model=model,
-            tokenizer=tokenizer,
-            prompts=prompts,
-            device=device,
-            max_new_tokens=args.max_new_tokens,
-            temperature=args.temperature,
-        )
-        if len(preds) != len(batch_rows):
-            raise SystemExit("batch generation returned unexpected number of predictions")
+        if args.chunked:
+            batch_preds = []
+            for row in batch_rows:
+                pred = _predict_row_chunked(
+                    row=row,
+                    model=model,
+                    tokenizer=tokenizer,
+                    device=device,
+                    max_new_tokens=args.max_new_tokens,
+                    temperature=args.temperature,
+                    chunk_max_chars=args.chunk_max_chars,
+                    batch_size=batch_size,
+                )
+                batch_preds.append(pred)
+        else:
+            prompts = [_build_inference_prompt(row) for row in batch_rows]
+            preds = _generate_predictions_batch(
+                model=model,
+                tokenizer=tokenizer,
+                prompts=prompts,
+                device=device,
+                max_new_tokens=args.max_new_tokens,
+                temperature=args.temperature,
+            )
+            if len(preds) != len(batch_rows):
+                raise SystemExit("batch generation returned unexpected number of predictions")
+            batch_preds = [{"raw_prediction": pred, "pred_obj": _parse_json_loose(pred)} for pred in preds]
 
-        for row, pred in zip(batch_rows, preds):
+        for row, pred_bundle in zip(batch_rows, batch_preds):
             expected = _parse_assistant_target(row)
-            pred_obj = _parse_json_loose(pred)
+            pred_obj = pred_bundle.get("pred_obj")
+            raw_prediction = str(pred_bundle.get("raw_prediction") or "")
 
             valid_json = isinstance(pred_obj, dict) and _looks_like_prediction_object(pred_obj)
             if valid_json:
@@ -158,6 +184,14 @@ def _run_eval(args: argparse.Namespace) -> None:
                 metrics["title_exact"] += 1
             if html_exact:
                 metrics["html_exact"] += 1
+            title_similarity = _text_similarity(exp_title, pred_title)
+            html_text_similarity = _html_text_similarity(exp_html, pred_html)
+            metrics["title_similarity_sum"] += title_similarity
+            metrics["html_text_similarity_sum"] += html_text_similarity
+            if title_similarity >= 0.8:
+                metrics["title_similarity_ge_0_8"] += 1
+            if html_text_similarity >= 0.8:
+                metrics["html_text_similarity_ge_0_8"] += 1
 
             if not (title_exact and html_exact):
                 mismatches.append(
@@ -168,11 +202,13 @@ def _run_eval(args: argparse.Namespace) -> None:
                         "predicted_title_normalized": pred_title,
                         "expected_description_html": exp_html,
                         "predicted_description_html": pred_html,
-                        "raw_prediction": pred,
+                        "raw_prediction": raw_prediction,
                         "valid_json": valid_json,
                         "title_exact": title_exact,
                         "html_exact": html_exact,
                         "html_allowed_tags_only": _uses_only_allowed_tags(pred_html),
+                        "title_similarity": round(title_similarity, 4),
+                        "html_text_similarity": round(html_text_similarity, 4),
                     }
                 )
 
@@ -196,12 +232,18 @@ def _run_eval(args: argparse.Namespace) -> None:
         **metrics,
         "model": model_name,
         "adapter_dir": args.adapter_dir,
+        "chunked": args.chunked,
+        "chunk_max_chars": args.chunk_max_chars if args.chunked else None,
         "valid_json_rate": round(metrics["valid_json"] / metrics["total"], 4),
         "title_exact_rate": round(metrics["title_exact"] / metrics["total"], 4),
         "html_exact_rate": round(metrics["html_exact"] / metrics["total"], 4),
         "title_non_empty_rate": round(metrics["title_non_empty"] / metrics["total"], 4),
         "html_non_empty_rate": round(metrics["html_non_empty"] / metrics["total"], 4),
         "html_allowed_tags_only_rate": round(metrics["html_allowed_tags_only"] / metrics["total"], 4),
+        "title_similarity_avg": round(metrics["title_similarity_sum"] / metrics["total"], 4),
+        "html_text_similarity_avg": round(metrics["html_text_similarity_sum"] / metrics["total"], 4),
+        "title_similarity_ge_0_8_rate": round(metrics["title_similarity_ge_0_8"] / metrics["total"], 4),
+        "html_text_similarity_ge_0_8_rate": round(metrics["html_text_similarity_ge_0_8"] / metrics["total"], 4),
         "mismatch_count": len(mismatches),
     }
 
@@ -220,6 +262,79 @@ def _build_inference_prompt(row: dict[str, Any]) -> str:
     system = _message_content(messages, 0)
     user = _message_content(messages, 1)
     return f"<|system|>\n{system}\n<|user|>\n{user}\n<|assistant|>\n"
+
+
+def _predict_row_chunked(
+    *,
+    row: dict[str, Any],
+    model,
+    tokenizer,
+    device: str,
+    max_new_tokens: int,
+    temperature: float,
+    chunk_max_chars: int,
+    batch_size: int,
+) -> dict[str, Any]:
+    messages = row.get("messages") or []
+    system = _message_content(messages, 0)
+    user_content = _message_content(messages, 1)
+
+    try:
+        user_payload = json.loads(user_content)
+    except json.JSONDecodeError:
+        prompt = f"<|system|>\n{system}\n<|user|>\n{user_content}\n<|assistant|>\n"
+        pred = _generate_predictions_batch(
+            model=model,
+            tokenizer=tokenizer,
+            prompts=[prompt],
+            device=device,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+        )[0]
+        return {"raw_prediction": pred, "pred_obj": _parse_json_loose(pred)}
+
+    desc = str(user_payload.get("description_raw") or "")
+    chunks = split_text_chunks(desc, max_chars=chunk_max_chars)
+    if not chunks:
+        chunks = [""]
+
+    prompts: list[str] = []
+    for idx, chunk in enumerate(chunks, start=1):
+        p = dict(user_payload)
+        p["description_raw"] = chunk
+        p["chunk_context"] = {"index": idx, "total": len(chunks)}
+        prompts.append(f"<|system|>\n{system}\n<|user|>\n{json.dumps(p, ensure_ascii=False)}\n<|assistant|>\n")
+
+    raw_parts: list[str] = []
+    title = ""
+    html_parts: list[str] = []
+
+    for offset in range(0, len(prompts), max(1, batch_size)):
+        sub_prompts = prompts[offset : offset + max(1, batch_size)]
+        sub_preds = _generate_predictions_batch(
+            model=model,
+            tokenizer=tokenizer,
+            prompts=sub_prompts,
+            device=device,
+            max_new_tokens=max_new_tokens,
+            temperature=temperature,
+        )
+        raw_parts.extend(sub_preds)
+        for pred in sub_preds:
+            obj = _parse_json_loose(pred) or {}
+            if not title:
+                maybe_title = str(obj.get("title_normalized") or "").strip()
+                if maybe_title:
+                    title = maybe_title
+            maybe_html = str(obj.get("description_html") or "").strip()
+            if maybe_html:
+                html_parts.append(maybe_html)
+
+    merged = {
+        "title_normalized": title,
+        "description_html": "\n".join(html_parts).strip(),
+    }
+    return {"raw_prediction": "\n<chunk>\n".join(raw_parts), "pred_obj": merged}
 
 
 def _resolve_base_model_name(*, adapter_dir: Path, explicit_model: str | None) -> str:
@@ -375,6 +490,29 @@ def _uses_only_allowed_tags(html: str) -> bool:
     return tags.issubset(ALLOWED_TAGS)
 
 
+def _html_text_similarity(expected_html: str, predicted_html: str) -> float:
+    exp = _normalize_text(_strip_tags(expected_html))
+    pred = _normalize_text(_strip_tags(predicted_html))
+    return _text_similarity(exp, pred)
+
+
+def _strip_tags(value: str) -> str:
+    text = re.sub(r"<[^>]+>", " ", value or "")
+    return unescape(text)
+
+
+def _normalize_text(value: str) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip().lower())
+
+
+def _text_similarity(expected: str, predicted: str) -> float:
+    exp = _normalize_text(expected)
+    pred = _normalize_text(predicted)
+    if not exp and not pred:
+        return 1.0
+    return SequenceMatcher(a=exp, b=pred).ratio()
+
+
 def _write_mismatches_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     fieldnames = [
         "id",
@@ -388,6 +526,8 @@ def _write_mismatches_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         "expected_description_html",
         "predicted_description_html",
         "raw_prediction",
+        "title_similarity",
+        "html_text_similarity",
     ]
     with path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
