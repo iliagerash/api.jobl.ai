@@ -21,6 +21,7 @@ jobl-normalize-sample = "app.sample_builder:run"
 jobl-normalize-eval = "app.eval_runner:run"
 jobl-normalize-ml-title = "app.ml_title_runner:run"
 jobl-normalize-llm-label = "app.llm_label_runner:run"
+jobl-normalize-llm-label-debug = "app.llm_label_debug_runner:run"
 
 [build-system]
 requires = ["setuptools>=68.0"]
