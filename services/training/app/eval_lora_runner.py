@@ -132,7 +132,7 @@ def _run_eval(args: argparse.Namespace) -> None:
             expected = _parse_assistant_target(row)
             pred_obj = _parse_json_loose(pred)
 
-            valid_json = isinstance(pred_obj, dict)
+            valid_json = isinstance(pred_obj, dict) and _looks_like_prediction_object(pred_obj)
             if valid_json:
                 metrics["valid_json"] += 1
 
@@ -295,24 +295,32 @@ def _parse_json_loose(content: str) -> dict[str, Any] | None:
     if not text:
         return None
 
-    decoder = json.JSONDecoder()
-    try:
-        obj = json.loads(text)
-        if isinstance(obj, dict):
+    # Prefer JSON objects that look like our target schema.
+    for obj in _iter_json_objects(text):
+        if _looks_like_prediction_object(obj):
             return obj
-    except json.JSONDecodeError:
-        pass
 
-    start = text.find("{")
-    if start >= 0:
-        candidate = text[start:]
-        try:
-            obj, _end = decoder.raw_decode(candidate)
-            if isinstance(obj, dict):
-                return obj
-        except json.JSONDecodeError:
-            pass
+    # Fallback: first JSON object if schema-specific object is not found.
+    for obj in _iter_json_objects(text):
+        return obj
     return None
+
+
+def _iter_json_objects(text: str):
+    decoder = json.JSONDecoder()
+    starts = [idx for idx, ch in enumerate(text) if ch == "{"]
+    for start in starts:
+        try:
+            obj, _end = decoder.raw_decode(text[start:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            yield obj
+
+
+def _looks_like_prediction_object(obj: dict[str, Any]) -> bool:
+    # Accept if at least one expected key is present; both is preferred.
+    return "title_normalized" in obj or "description_html" in obj
 
 
 def _uses_only_allowed_tags(html: str) -> bool:
