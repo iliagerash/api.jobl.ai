@@ -516,8 +516,25 @@ def _update_rows(engine, payload: list[dict[str, Any]]) -> None:
         WHERE id = :id
         """
     )
-    with engine.begin() as conn:
-        conn.execute(query, payload)
+    try:
+        with engine.begin() as conn:
+            conn.execute(query, payload)
+        return
+    except Exception:  # noqa: BLE001
+        logger.exception("bulk update failed; retrying row-by-row rows=%s", len(payload))
+
+    success = 0
+    failed = 0
+    for row in payload:
+        try:
+            with engine.begin() as conn:
+                conn.execute(query, [row])
+            success += 1
+        except Exception:  # noqa: BLE001
+            failed += 1
+            logger.exception("row update failed id=%s", row.get("id"))
+
+    logger.warning("row-by-row update completed success=%s failed=%s", success, failed)
 
 
 def _result_to_db_payload(
@@ -528,13 +545,15 @@ def _result_to_db_payload(
 ) -> dict[str, Any]:
     return {
         "id": row["id"],
-        "expected_title_normalized": result["title_normalized"],
-        "expected_description_html": result["description_html"],
+        "expected_title_normalized": _sanitize_text_for_postgres(result["title_normalized"]),
+        "expected_description_html": _sanitize_text_for_postgres(result["description_html"]),
         "batch_tag": write_batch_tag,
-        "review_notes": _merge_review_notes(
-            existing=row.get("review_notes"),
-            model=settings.openai_model,
-            prompt_version=settings.llm_prompt_version,
+        "review_notes": _sanitize_text_for_postgres(
+            _merge_review_notes(
+                existing=row.get("review_notes"),
+                model=settings.openai_model,
+                prompt_version=settings.llm_prompt_version,
+            )
         ),
     }
 
@@ -620,6 +639,14 @@ def _merge_review_notes(existing: Any, model: str, prompt_version: str) -> str:
     if marker in base:
         return base
     return f"{base}\n{marker}"
+
+
+def _sanitize_text_for_postgres(value: Any) -> str:
+    # PostgreSQL text/varchar cannot contain NUL (0x00) bytes.
+    text_value = str(value or "")
+    if "\x00" in text_value:
+        return text_value.replace("\x00", "")
+    return text_value
 
 
 if __name__ == "__main__":
