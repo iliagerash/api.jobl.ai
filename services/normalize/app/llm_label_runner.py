@@ -341,18 +341,26 @@ def _resume_existing_batch(
     row_map = {str(row["id"]): row for row in rows}
 
     payload: list[dict[str, Any]] = []
+    failed_ids: list[str] = []
     for row_id, result in results.items():
         row = row_map.get(row_id)
         if not row or result is None:
+            failed_ids.append(row_id)
             continue
         payload.append(_result_to_db_payload(row=row, result=result, write_batch_tag=write_batch_tag))
 
     _update_rows(engine=engine, payload=payload)
+    if failed_ids:
+        logger.warning(
+            "resume failed row ids count=%s ids=%s",
+            len(failed_ids),
+            ",".join(sorted(failed_ids, key=lambda v: int(v))[:200]),
+        )
     logger.info(
         "llm label progress mode=resume fetched=%s updated=%s failed=%s",
         len(rows),
         len(payload),
-        max(0, len(rows) - len(payload)),
+        len(failed_ids),
     )
     return len(rows), len(payload)
 
