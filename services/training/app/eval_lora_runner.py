@@ -139,6 +139,12 @@ def _run_eval(args: argparse.Namespace) -> None:
         batch_rows = rows[offset : offset + batch_size]
         batch_end = offset + len(batch_rows)
         logger.info("eval batch started rows=%s-%s/%s", offset + 1, batch_end, len(rows))
+        batch_prompt_build_sec = 0.0
+        batch_tokenize_sec = 0.0
+        batch_generate_sec = 0.0
+        batch_decode_sec = 0.0
+        batch_parse_sec = 0.0
+        batch_postprocess_sec = 0.0
         if args.chunked:
             batch_preds = []
             for row in batch_rows:
@@ -152,21 +158,38 @@ def _run_eval(args: argparse.Namespace) -> None:
                     chunk_max_chars=args.chunk_max_chars,
                     batch_size=batch_size,
                 )
+                timings = pred.get("_timings") or {}
+                batch_prompt_build_sec += float(timings.get("prompt_build_sec") or 0.0)
+                batch_tokenize_sec += float(timings.get("tokenize_sec") or 0.0)
+                batch_generate_sec += float(timings.get("generate_sec") or 0.0)
+                batch_decode_sec += float(timings.get("decode_sec") or 0.0)
+                batch_parse_sec += float(timings.get("parse_sec") or 0.0)
                 batch_preds.append(pred)
         else:
+            t_prompt = time.perf_counter()
             prompts = [_build_inference_prompt(row) for row in batch_rows]
-            preds = _generate_predictions_batch(
+            batch_prompt_build_sec += time.perf_counter() - t_prompt
+            preds, stage_timings = _generate_predictions_batch(
                 model=model,
                 tokenizer=tokenizer,
                 prompts=prompts,
                 device=device,
                 max_new_tokens=args.max_new_tokens,
                 temperature=args.temperature,
+                return_timings=True,
             )
+            batch_tokenize_sec += stage_timings["tokenize_sec"]
+            batch_generate_sec += stage_timings["generate_sec"]
+            batch_decode_sec += stage_timings["decode_sec"]
             if len(preds) != len(batch_rows):
                 raise SystemExit("batch generation returned unexpected number of predictions")
-            batch_preds = [{"raw_prediction": pred, "pred_obj": _parse_json_loose(pred)} for pred in preds]
+            t_parse = time.perf_counter()
+            batch_preds = []
+            for pred in preds:
+                batch_preds.append({"raw_prediction": pred, "pred_obj": _parse_json_loose(pred)})
+            batch_parse_sec += time.perf_counter() - t_parse
 
+        t_post = time.perf_counter()
         for row, pred_bundle in zip(batch_rows, batch_preds):
             expected = _parse_assistant_target(row)
             pred_obj = pred_bundle.get("pred_obj")
@@ -221,8 +244,21 @@ def _run_eval(args: argparse.Namespace) -> None:
                         "html_text_similarity": round(html_text_similarity, 4),
                     }
                 )
+        batch_postprocess_sec += time.perf_counter() - t_post
 
         processed += len(batch_rows)
+        logger.info(
+            "eval batch timing rows=%s-%s/%s prompt_build=%.3fs tokenize=%.3fs generate=%.3fs decode=%.3fs parse=%.3fs postprocess=%.3fs",
+            offset + 1,
+            batch_end,
+            len(rows),
+            batch_prompt_build_sec,
+            batch_tokenize_sec,
+            batch_generate_sec,
+            batch_decode_sec,
+            batch_parse_sec,
+            batch_postprocess_sec,
+        )
         if processed % progress_every == 0 or processed == len(rows):
             elapsed = max(1e-6, time.time() - started_at)
             rate = processed / elapsed
@@ -285,6 +321,11 @@ def _predict_row_chunked(
     chunk_max_chars: int,
     batch_size: int,
 ) -> dict[str, Any]:
+    t_prompt_build = 0.0
+    t_tokenize = 0.0
+    t_generate = 0.0
+    t_decode = 0.0
+    t_parse = 0.0
     messages = row.get("messages") or []
     system = _message_content(messages, 0)
     user_content = _message_content(messages, 1)
@@ -293,15 +334,35 @@ def _predict_row_chunked(
         user_payload = json.loads(user_content)
     except json.JSONDecodeError:
         prompt = f"<|system|>\n{system}\n<|user|>\n{user_content}\n<|assistant|>\n"
-        pred = _generate_predictions_batch(
+        t_prompt = time.perf_counter()
+        pred_list, stage_timings = _generate_predictions_batch(
             model=model,
             tokenizer=tokenizer,
             prompts=[prompt],
             device=device,
             max_new_tokens=max_new_tokens,
             temperature=temperature,
-        )[0]
-        return {"raw_prediction": pred, "pred_obj": _parse_json_loose(pred)}
+            return_timings=True,
+        )
+        t_prompt_build += time.perf_counter() - t_prompt
+        t_tokenize += stage_timings["tokenize_sec"]
+        t_generate += stage_timings["generate_sec"]
+        t_decode += stage_timings["decode_sec"]
+        pred = pred_list[0]
+        t_parse0 = time.perf_counter()
+        pred_obj = _parse_json_loose(pred)
+        t_parse += time.perf_counter() - t_parse0
+        return {
+            "raw_prediction": pred,
+            "pred_obj": pred_obj,
+            "_timings": {
+                "prompt_build_sec": t_prompt_build,
+                "tokenize_sec": t_tokenize,
+                "generate_sec": t_generate,
+                "decode_sec": t_decode,
+                "parse_sec": t_parse,
+            },
+        }
 
     desc = str(user_payload.get("description_raw") or "")
     chunks = split_text_chunks(desc, max_chars=chunk_max_chars)
@@ -309,11 +370,13 @@ def _predict_row_chunked(
         chunks = [""]
 
     prompts: list[str] = []
+    t_prompt = time.perf_counter()
     for idx, chunk in enumerate(chunks, start=1):
         p = dict(user_payload)
         p["description_raw"] = chunk
         p["chunk_context"] = {"index": idx, "total": len(chunks)}
         prompts.append(f"<|system|>\n{system}\n<|user|>\n{json.dumps(p, ensure_ascii=False)}\n<|assistant|>\n")
+    t_prompt_build += time.perf_counter() - t_prompt
 
     raw_parts: list[str] = []
     title = ""
@@ -321,15 +384,20 @@ def _predict_row_chunked(
 
     for offset in range(0, len(prompts), max(1, batch_size)):
         sub_prompts = prompts[offset : offset + max(1, batch_size)]
-        sub_preds = _generate_predictions_batch(
+        sub_preds, stage_timings = _generate_predictions_batch(
             model=model,
             tokenizer=tokenizer,
             prompts=sub_prompts,
             device=device,
             max_new_tokens=max_new_tokens,
             temperature=temperature,
+            return_timings=True,
         )
+        t_tokenize += stage_timings["tokenize_sec"]
+        t_generate += stage_timings["generate_sec"]
+        t_decode += stage_timings["decode_sec"]
         raw_parts.extend(sub_preds)
+        t_parse0 = time.perf_counter()
         for pred in sub_preds:
             obj = _parse_json_loose(pred) or {}
             if not title:
@@ -339,12 +407,23 @@ def _predict_row_chunked(
             maybe_html = str(obj.get("description_html") or "").strip()
             if maybe_html:
                 html_parts.append(maybe_html)
+        t_parse += time.perf_counter() - t_parse0
 
     merged = {
         "title_normalized": title,
         "description_html": "\n".join(html_parts).strip(),
     }
-    return {"raw_prediction": "\n<chunk>\n".join(raw_parts), "pred_obj": merged}
+    return {
+        "raw_prediction": "\n<chunk>\n".join(raw_parts),
+        "pred_obj": merged,
+        "_timings": {
+            "prompt_build_sec": t_prompt_build,
+            "tokenize_sec": t_tokenize,
+            "generate_sec": t_generate,
+            "decode_sec": t_decode,
+            "parse_sec": t_parse,
+        },
+    }
 
 
 def _resolve_base_model_name(*, adapter_dir: Path, explicit_model: str | None) -> str:
@@ -383,17 +462,26 @@ def _message_content(messages: Any, index: int) -> str:
 
 
 def _generate_predictions_batch(
-    *, model, tokenizer, prompts: list[str], device: str, max_new_tokens: int, temperature: float
-) -> list[str]:
+    *,
+    model,
+    tokenizer,
+    prompts: list[str],
+    device: str,
+    max_new_tokens: int,
+    temperature: float,
+    return_timings: bool = False,
+) -> list[str] | tuple[list[str], dict[str, float]]:
     import torch
 
     # Decoder-only models should use left padding for correct batched generation behavior.
     tokenizer.padding_side = "left"
+    t0 = time.perf_counter()
     encoded = tokenizer(prompts, return_tensors="pt", padding=True)
     input_ids = encoded["input_ids"].to(device)
     attention_mask = encoded.get("attention_mask")
     if attention_mask is not None:
         attention_mask = attention_mask.to(device)
+    t1 = time.perf_counter()
 
     do_sample = temperature > 0
     with torch.no_grad():
@@ -406,6 +494,7 @@ def _generate_predictions_batch(
             pad_token_id=tokenizer.pad_token_id,
             eos_token_id=tokenizer.eos_token_id,
         )
+    t2 = time.perf_counter()
 
     # In batched generation, decoded continuation starts after the padded prompt width.
     prompt_width = int(input_ids.shape[1])
@@ -413,6 +502,14 @@ def _generate_predictions_batch(
     for idx in range(len(prompts)):
         gen_ids = out[idx][prompt_width:]
         predictions.append(tokenizer.decode(gen_ids, skip_special_tokens=True).strip())
+    t3 = time.perf_counter()
+    timings = {
+        "tokenize_sec": t1 - t0,
+        "generate_sec": t2 - t1,
+        "decode_sec": t3 - t2,
+    }
+    if return_timings:
+        return predictions, timings
     return predictions
 
 
