@@ -151,6 +151,7 @@ Arguments:
 - `--adapter-dir`: adapter directory (default `artifacts/lora-normalize-v1/adapter`).
 - `--limit`: optional max rows to evaluate, `0` means all.
 - `--max-new-tokens`, `--temperature`: inference params.
+- `--progress-every`: progress log interval in rows (default `10`).
 - `--out-dir`: output artifacts directory (default `artifacts/lora-normalize-v1/eval`).
 
 Metrics:
@@ -171,6 +172,7 @@ Example:
 ```bash
 jobl-training-eval-lora
 jobl-training-eval-lora --limit=100 --out-dir=artifacts/lora-normalize-v1/eval_smoke
+jobl-training-eval-lora --progress-every=5
 ```
 
 ## End-to-end quick run

@@ -3,6 +3,7 @@ import csv
 import json
 import logging
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=0, help="Max rows to evaluate, 0 means all")
     parser.add_argument("--max-new-tokens", type=int, default=768, help="Generation max_new_tokens")
     parser.add_argument("--temperature", type=float, default=0.0, help="Generation temperature")
+    parser.add_argument("--progress-every", type=int, default=10, help="Log progress every N rows")
     parser.add_argument("--out-dir", default="artifacts/lora-normalize-v1/eval", help="Directory for evaluation artifacts")
     return parser.parse_args()
 
@@ -106,6 +108,8 @@ def _run_eval(args: argparse.Namespace) -> None:
         "html_allowed_tags_only": 0,
     }
     mismatches: list[dict[str, Any]] = []
+    started_at = time.time()
+    progress_every = max(1, args.progress_every)
 
     for idx, row in enumerate(rows, start=1):
         prompt = _build_inference_prompt(row)
@@ -161,8 +165,20 @@ def _run_eval(args: argparse.Namespace) -> None:
                 }
             )
 
-        if idx % 20 == 0 or idx == len(rows):
-            logger.info("eval progress processed=%s/%s", idx, len(rows))
+        if idx % progress_every == 0 or idx == len(rows):
+            elapsed = max(1e-6, time.time() - started_at)
+            rate = idx / elapsed
+            remaining = max(0, len(rows) - idx)
+            eta_seconds = int(remaining / rate) if rate > 0 else 0
+            logger.info(
+                "eval progress processed=%s/%s (%.1f%%) elapsed=%s eta=%s rows_per_sec=%.3f",
+                idx,
+                len(rows),
+                (idx / len(rows)) * 100.0,
+                _format_seconds(int(elapsed)),
+                _format_seconds(eta_seconds),
+                rate,
+            )
 
     summary = {
         **metrics,
@@ -311,6 +327,15 @@ def _write_mismatches_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writeheader()
         for row in rows:
             writer.writerow({k: row.get(k) for k in fieldnames})
+
+
+def _format_seconds(total_seconds: int) -> str:
+    hours = total_seconds // 3600
+    minutes = (total_seconds % 3600) // 60
+    seconds = total_seconds % 60
+    if hours > 0:
+        return f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+    return f"{minutes:02d}:{seconds:02d}"
 
 
 if __name__ == "__main__":
