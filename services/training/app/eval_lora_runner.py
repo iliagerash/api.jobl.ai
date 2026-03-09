@@ -126,9 +126,19 @@ def _run_eval(args: argparse.Namespace) -> None:
     progress_every = max(1, args.progress_every)
     batch_size = max(1, args.batch_size)
     processed = 0
+    logger.info(
+        "eval inference started rows=%s batch_size=%s chunked=%s max_new_tokens=%s progress_every=%s",
+        len(rows),
+        batch_size,
+        args.chunked,
+        args.max_new_tokens,
+        progress_every,
+    )
 
     for offset in range(0, len(rows), batch_size):
         batch_rows = rows[offset : offset + batch_size]
+        batch_end = offset + len(batch_rows)
+        logger.info("eval batch started rows=%s-%s/%s", offset + 1, batch_end, len(rows))
         if args.chunked:
             batch_preds = []
             for row in batch_rows:
