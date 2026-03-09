@@ -1,6 +1,7 @@
 import argparse
 import json
 import logging
+import re
 import tempfile
 import time
 from datetime import datetime, timezone
@@ -15,6 +16,7 @@ from app.logging import configure_logging
 
 
 logger = logging.getLogger("jobl.normalize.llm_label")
+TEMPLATE_TOKEN_RE = re.compile(r"\[#([A-Za-z0-9_]+)#\]")
 
 
 SYSTEM_PROMPT = """
@@ -408,7 +410,7 @@ def _label_row_direct(client: OpenAI, row: dict[str, Any], debug: bool = False) 
     user_payload = {
         "prompt_version": settings.llm_prompt_version,
         "title_raw": row.get("title_raw") or "",
-        "description_raw": row.get("description_raw") or "",
+        "description_raw": _sanitize_input_for_llm(row.get("description_raw")),
         "location_context": {
             "language_code": row.get("language_code"),
             "country_code": row.get("country_code"),
@@ -458,7 +460,7 @@ def _build_batch_request(row: dict[str, Any]) -> dict[str, Any]:
     user_payload = {
         "prompt_version": settings.llm_prompt_version,
         "title_raw": row.get("title_raw") or "",
-        "description_raw": row.get("description_raw") or "",
+        "description_raw": _sanitize_input_for_llm(row.get("description_raw")),
         "location_context": {
             "language_code": row.get("language_code"),
             "country_code": row.get("country_code"),
@@ -647,6 +649,14 @@ def _sanitize_text_for_postgres(value: Any) -> str:
     if "\x00" in text_value:
         return text_value.replace("\x00", "")
     return text_value
+
+
+def _sanitize_input_for_llm(value: Any) -> str:
+    text_value = str(value or "")
+    if "\x00" in text_value:
+        text_value = text_value.replace("\x00", "")
+    # Escape scraper template placeholders (e.g. [#IABV2_TITLE#]) so they are treated as plain text.
+    return TEMPLATE_TOKEN_RE.sub(r"&#91;#\1#&#93;", text_value)
 
 
 if __name__ == "__main__":
