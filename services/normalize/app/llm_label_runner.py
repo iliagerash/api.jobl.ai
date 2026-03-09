@@ -45,18 +45,16 @@ Return strict JSON with keys:
 
 RESPONSE_JSON_SCHEMA = {
     "type": "json_schema",
-    "json_schema": {
-        "name": "job_normalization",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "properties": {
-                "title_normalized": {"type": "string"},
-                "description_html": {"type": "string"},
-            },
-            "required": ["title_normalized", "description_html"],
-            "additionalProperties": False,
+    "name": "job_normalization",
+    "strict": True,
+    "schema": {
+        "type": "object",
+        "properties": {
+            "title_normalized": {"type": "string"},
+            "description_html": {"type": "string"},
         },
+        "required": ["title_normalized", "description_html"],
+        "additionalProperties": False,
     },
 }
 
@@ -222,7 +220,7 @@ def _run_batch_mode(
 
         batch = client.batches.create(
             input_file_id=in_file.id,
-            endpoint="/v1/chat/completions",
+            endpoint="/v1/responses",
             completion_window=settings.openai_batch_completion_window,
             metadata={
                 "service": "jobl-normalize",
@@ -452,15 +450,15 @@ def _label_row_direct(client: OpenAI, row: dict[str, Any], debug: bool = False) 
         )
     for attempt in range(1, settings.openai_max_retries + 1):
         try:
-            resp = client.chat.completions.create(
+            resp = client.responses.create(
                 model=settings.openai_model,
-                messages=[
+                input=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
                 ],
-                response_format=RESPONSE_JSON_SCHEMA,
+                text={"format": RESPONSE_JSON_SCHEMA},
             )
-            content = (resp.choices[0].message.content or "").strip()
+            content = _extract_text_from_responses_object(resp).strip()
             if debug:
                 logger.info("LLM DEBUG RESPONSE id=%s\n%s", row.get("id"), content)
             parsed = _parse_json(content)
@@ -494,14 +492,14 @@ def _build_batch_request(row: dict[str, Any]) -> dict[str, Any]:
     return {
         "custom_id": str(row["id"]),
         "method": "POST",
-        "url": "/v1/chat/completions",
+        "url": "/v1/responses",
         "body": {
             "model": settings.openai_model,
-            "messages": [
+            "input": [
                 {"role": "system", "content": SYSTEM_PROMPT},
                 {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
             ],
-            "response_format": RESPONSE_JSON_SCHEMA,
+            "text": {"format": RESPONSE_JSON_SCHEMA},
         },
     }
 
@@ -648,10 +646,8 @@ def _parse_batch_output_lines(text_data: str) -> dict[str, dict[str, str] | None
             parsed[custom_id] = None
             continue
         body = ((item.get("response") or {}).get("body") or {})
-        content = ""
-        try:
-            content = body["choices"][0]["message"]["content"] or ""
-        except Exception:  # noqa: BLE001
+        content = _extract_text_from_response_body(body)
+        if not content:
             logger.warning("batch line malformed id=%s body=%s", custom_id, body)
             parsed[custom_id] = None
             continue
@@ -663,6 +659,54 @@ def _parse_batch_output_lines(text_data: str) -> dict[str, dict[str, str] | None
             continue
         parsed[custom_id] = _validated_result_or_none(json_obj)
     return parsed
+
+
+def _extract_text_from_responses_object(resp: Any) -> str:
+    # Preferred fast path in SDK.
+    text_value = getattr(resp, "output_text", None)
+    if isinstance(text_value, str) and text_value.strip():
+        return text_value
+
+    # Fallback: parse object dump and reuse body extractor.
+    dump = None
+    model_dump = getattr(resp, "model_dump", None)
+    if callable(model_dump):
+        try:
+            dump = model_dump()
+        except Exception:  # noqa: BLE001
+            dump = None
+    if isinstance(dump, dict):
+        return _extract_text_from_response_body(dump)
+    return ""
+
+
+def _extract_text_from_response_body(body: Any) -> str:
+    if not isinstance(body, dict):
+        return ""
+
+    # Responses API format.
+    output_text = body.get("output_text")
+    if isinstance(output_text, str) and output_text.strip():
+        return output_text
+
+    output = body.get("output")
+    if isinstance(output, list):
+        parts: list[str] = []
+        for item in output:
+            if not isinstance(item, dict):
+                continue
+            content_items = item.get("content")
+            if not isinstance(content_items, list):
+                continue
+            for c in content_items:
+                if not isinstance(c, dict):
+                    continue
+                txt = c.get("text")
+                if isinstance(txt, str) and txt:
+                    parts.append(txt)
+        if parts:
+            return "\n".join(parts).strip()
+    return ""
 
 
 def _validated_result_or_none(data: dict[str, Any]) -> dict[str, str] | None:
