@@ -42,6 +42,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--adapter-dir", default="artifacts/lora-normalize-v1/adapter", help="LoRA adapter directory")
     parser.add_argument("--limit", type=int, default=0, help="Max rows to evaluate, 0 means all")
+    parser.add_argument("--batch-size", type=int, default=1, help="Inference batch size")
     parser.add_argument("--max-new-tokens", type=int, default=768, help="Generation max_new_tokens")
     parser.add_argument("--temperature", type=float, default=0.0, help="Generation temperature")
     parser.add_argument("--progress-every", type=int, default=10, help="Log progress every N rows")
@@ -110,71 +111,78 @@ def _run_eval(args: argparse.Namespace) -> None:
     mismatches: list[dict[str, Any]] = []
     started_at = time.time()
     progress_every = max(1, args.progress_every)
+    batch_size = max(1, args.batch_size)
+    processed = 0
 
-    for idx, row in enumerate(rows, start=1):
-        prompt = _build_inference_prompt(row)
-        pred = _generate_prediction(
+    for offset in range(0, len(rows), batch_size):
+        batch_rows = rows[offset : offset + batch_size]
+        prompts = [_build_inference_prompt(row) for row in batch_rows]
+        preds = _generate_predictions_batch(
             model=model,
             tokenizer=tokenizer,
-            prompt=prompt,
+            prompts=prompts,
             device=device,
             max_new_tokens=args.max_new_tokens,
             temperature=args.temperature,
         )
+        if len(preds) != len(batch_rows):
+            raise SystemExit("batch generation returned unexpected number of predictions")
 
-        expected = _parse_assistant_target(row)
-        pred_obj = _parse_json_loose(pred)
+        for row, pred in zip(batch_rows, preds):
+            expected = _parse_assistant_target(row)
+            pred_obj = _parse_json_loose(pred)
 
-        valid_json = isinstance(pred_obj, dict)
-        if valid_json:
-            metrics["valid_json"] += 1
+            valid_json = isinstance(pred_obj, dict)
+            if valid_json:
+                metrics["valid_json"] += 1
 
-        pred_title = str((pred_obj or {}).get("title_normalized") or "").strip()
-        pred_html = str((pred_obj or {}).get("description_html") or "").strip()
-        exp_title = str(expected.get("title_normalized") or "").strip()
-        exp_html = str(expected.get("description_html") or "").strip()
+            pred_title = str((pred_obj or {}).get("title_normalized") or "").strip()
+            pred_html = str((pred_obj or {}).get("description_html") or "").strip()
+            exp_title = str(expected.get("title_normalized") or "").strip()
+            exp_html = str(expected.get("description_html") or "").strip()
 
-        if pred_title:
-            metrics["title_non_empty"] += 1
-        if pred_html:
-            metrics["html_non_empty"] += 1
-        if _uses_only_allowed_tags(pred_html):
-            metrics["html_allowed_tags_only"] += 1
+            if pred_title:
+                metrics["title_non_empty"] += 1
+            if pred_html:
+                metrics["html_non_empty"] += 1
+            if _uses_only_allowed_tags(pred_html):
+                metrics["html_allowed_tags_only"] += 1
 
-        title_exact = pred_title == exp_title
-        html_exact = pred_html == exp_html
-        if title_exact:
-            metrics["title_exact"] += 1
-        if html_exact:
-            metrics["html_exact"] += 1
+            title_exact = pred_title == exp_title
+            html_exact = pred_html == exp_html
+            if title_exact:
+                metrics["title_exact"] += 1
+            if html_exact:
+                metrics["html_exact"] += 1
 
-        if not (title_exact and html_exact):
-            mismatches.append(
-                {
-                    "id": row.get("id"),
-                    "language_code": row.get("language_code"),
-                    "expected_title_normalized": exp_title,
-                    "predicted_title_normalized": pred_title,
-                    "expected_description_html": exp_html,
-                    "predicted_description_html": pred_html,
-                    "raw_prediction": pred,
-                    "valid_json": valid_json,
-                    "title_exact": title_exact,
-                    "html_exact": html_exact,
-                    "html_allowed_tags_only": _uses_only_allowed_tags(pred_html),
-                }
-            )
+            if not (title_exact and html_exact):
+                mismatches.append(
+                    {
+                        "id": row.get("id"),
+                        "language_code": row.get("language_code"),
+                        "expected_title_normalized": exp_title,
+                        "predicted_title_normalized": pred_title,
+                        "expected_description_html": exp_html,
+                        "predicted_description_html": pred_html,
+                        "raw_prediction": pred,
+                        "valid_json": valid_json,
+                        "title_exact": title_exact,
+                        "html_exact": html_exact,
+                        "html_allowed_tags_only": _uses_only_allowed_tags(pred_html),
+                    }
+                )
 
-        if idx % progress_every == 0 or idx == len(rows):
+        processed += len(batch_rows)
+        if processed % progress_every == 0 or processed == len(rows):
             elapsed = max(1e-6, time.time() - started_at)
-            rate = idx / elapsed
-            remaining = max(0, len(rows) - idx)
+            rate = processed / elapsed
+            remaining = max(0, len(rows) - processed)
             eta_seconds = int(remaining / rate) if rate > 0 else 0
             logger.info(
                 "eval progress processed=%s/%s (%.1f%%) elapsed=%s eta=%s rows_per_sec=%.3f",
-                idx,
+                processed,
                 len(rows),
-                (idx / len(rows)) * 100.0,
+                (processed / len(rows)) * 100.0,
                 _format_seconds(int(elapsed)),
                 _format_seconds(eta_seconds),
                 rate,
@@ -245,10 +253,12 @@ def _message_content(messages: Any, index: int) -> str:
     return ""
 
 
-def _generate_prediction(*, model, tokenizer, prompt: str, device: str, max_new_tokens: int, temperature: float) -> str:
+def _generate_predictions_batch(
+    *, model, tokenizer, prompts: list[str], device: str, max_new_tokens: int, temperature: float
+) -> list[str]:
     import torch
 
-    encoded = tokenizer(prompt, return_tensors="pt")
+    encoded = tokenizer(prompts, return_tensors="pt", padding=True)
     input_ids = encoded["input_ids"].to(device)
     attention_mask = encoded.get("attention_mask")
     if attention_mask is not None:
@@ -266,8 +276,12 @@ def _generate_prediction(*, model, tokenizer, prompt: str, device: str, max_new_
             eos_token_id=tokenizer.eos_token_id,
         )
 
-    gen_ids = out[0][input_ids.shape[1] :]
-    return tokenizer.decode(gen_ids, skip_special_tokens=True).strip()
+    input_lengths = attention_mask.sum(dim=1).tolist() if attention_mask is not None else [input_ids.shape[1]] * len(prompts)
+    predictions: list[str] = []
+    for idx, in_len in enumerate(input_lengths):
+        gen_ids = out[idx][int(in_len) :]
+        predictions.append(tokenizer.decode(gen_ids, skip_special_tokens=True).strip())
+    return predictions
 
 
 def _parse_assistant_target(row: dict[str, Any]) -> dict[str, Any]:

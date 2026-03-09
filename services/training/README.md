@@ -152,6 +152,7 @@ Arguments:
   If omitted, evaluator auto-detects model from `<adapter-dir>/adapter_config.json`.
 - `--adapter-dir`: adapter directory (default `artifacts/lora-normalize-v1/adapter`).
 - `--limit`: optional max rows to evaluate, `0` means all.
+- `--batch-size`: inference batch size (default `1`). On GPU try `4-16`.
 - `--max-new-tokens`, `--temperature`: inference params.
 - `--progress-every`: progress log interval in rows (default `10`).
 - `--out-dir`: output artifacts directory (default `artifacts/lora-normalize-v1/eval`).
@@ -175,6 +176,7 @@ Example:
 jobl-training-eval-lora
 jobl-training-eval-lora --limit=100 --out-dir=artifacts/lora-normalize-v1/eval_smoke
 jobl-training-eval-lora --progress-every=5
+jobl-training-eval-lora --batch-size=8 --max-new-tokens=256
 ```
 
 ## End-to-end quick run
