@@ -34,7 +34,11 @@ TAG_RE = re.compile(r"<\s*/?\s*([a-zA-Z0-9]+)")
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Evaluate LoRA adapter on SFT test set")
     parser.add_argument("--test-jsonl", default="data/sft/test.jsonl", help="Instruction test JSONL path")
-    parser.add_argument("--model", default="microsoft/Phi-3-mini-4k-instruct", help="Base HF model id")
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="Base HF model id. If omitted, auto-detected from adapter_config.json",
+    )
     parser.add_argument("--adapter-dir", default="artifacts/lora-normalize-v1/adapter", help="LoRA adapter directory")
     parser.add_argument("--limit", type=int, default=0, help="Max rows to evaluate, 0 means all")
     parser.add_argument("--max-new-tokens", type=int, default=768, help="Generation max_new_tokens")
@@ -72,12 +76,15 @@ def _run_eval(args: argparse.Namespace) -> None:
     has_cuda = torch.cuda.is_available()
     dtype = torch.bfloat16 if has_cuda else torch.float32
 
-    tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=True)
+    model_name = _resolve_base_model_name(adapter_dir=Path(args.adapter_dir), explicit_model=args.model)
+    logger.info("eval base model resolved model=%s", model_name)
+
+    tokenizer = AutoTokenizer.from_pretrained(model_name, use_fast=True)
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
     base_model = AutoModelForCausalLM.from_pretrained(
-        args.model,
+        model_name,
         torch_dtype=dtype,
         device_map="auto" if has_cuda else None,
         low_cpu_mem_usage=True,
@@ -159,6 +166,8 @@ def _run_eval(args: argparse.Namespace) -> None:
 
     summary = {
         **metrics,
+        "model": model_name,
+        "adapter_dir": args.adapter_dir,
         "valid_json_rate": round(metrics["valid_json"] / metrics["total"], 4),
         "title_exact_rate": round(metrics["title_exact"] / metrics["total"], 4),
         "html_exact_rate": round(metrics["html_exact"] / metrics["total"], 4),
@@ -183,6 +192,32 @@ def _build_inference_prompt(row: dict[str, Any]) -> str:
     system = _message_content(messages, 0)
     user = _message_content(messages, 1)
     return f"<|system|>\n{system}\n<|user|>\n{user}\n<|assistant|>\n"
+
+
+def _resolve_base_model_name(*, adapter_dir: Path, explicit_model: str | None) -> str:
+    if explicit_model:
+        return explicit_model
+
+    cfg_path = adapter_dir / "adapter_config.json"
+    if not cfg_path.exists():
+        raise SystemExit(
+            f"Cannot auto-detect base model: {cfg_path} not found. "
+            "Pass --model explicitly."
+        )
+
+    try:
+        cfg = json.loads(cfg_path.read_text(encoding="utf-8"))
+    except Exception as exc:  # noqa: BLE001
+        raise SystemExit(
+            f"Cannot parse {cfg_path}. Pass --model explicitly."
+        ) from exc
+
+    model_name = str(cfg.get("base_model_name_or_path") or "").strip()
+    if not model_name:
+        raise SystemExit(
+            f"No base_model_name_or_path in {cfg_path}. Pass --model explicitly."
+        )
+    return model_name
 
 
 def _message_content(messages: Any, index: int) -> str:

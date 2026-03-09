@@ -146,7 +146,8 @@ Purpose:
 
 Arguments:
 - `--test-jsonl`: test instruction JSONL path (default `data/sft/test.jsonl`).
-- `--model`: base model id (default `microsoft/Phi-3-mini-4k-instruct`).
+- `--model`: optional base model id override.
+  If omitted, evaluator auto-detects model from `<adapter-dir>/adapter_config.json`.
 - `--adapter-dir`: adapter directory (default `artifacts/lora-normalize-v1/adapter`).
 - `--limit`: optional max rows to evaluate, `0` means all.
 - `--max-new-tokens`, `--temperature`: inference params.
