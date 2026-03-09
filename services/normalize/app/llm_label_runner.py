@@ -501,20 +501,35 @@ def _build_batch_request(row: dict[str, Any]) -> dict[str, Any]:
 def _parse_json(content: str) -> dict[str, Any]:
     if not content:
         return {}
-    try:
-        data = json.loads(content)
-        if isinstance(data, dict):
-            return data
-    except json.JSONDecodeError:
-        pass
 
+    candidates: list[str] = [content]
     cleaned = content.strip()
     if cleaned.startswith("```"):
         cleaned = cleaned.strip("`")
         cleaned = cleaned.replace("json\n", "", 1).strip()
-    data = json.loads(cleaned)
-    if isinstance(data, dict):
-        return data
+    candidates.append(cleaned)
+
+    # Try to recover the first JSON object from content that has trailing text/noise.
+    decoder = json.JSONDecoder()
+    for idx, ch in enumerate(cleaned):
+        if ch != "{":
+            continue
+        try:
+            obj, _end = decoder.raw_decode(cleaned[idx:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(obj, dict):
+            return obj
+
+    for candidate in candidates:
+        if not candidate:
+            continue
+        try:
+            data = json.loads(candidate)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict):
+            return data
     return {}
 
 
@@ -612,7 +627,11 @@ def _parse_batch_output_lines(text_data: str) -> dict[str, dict[str, str] | None
         line = raw_line.strip()
         if not line:
             continue
-        item = json.loads(line)
+        try:
+            item = json.loads(line)
+        except json.JSONDecodeError:
+            logger.warning("batch output line is not valid json; skipping line=%s", line[:200])
+            continue
         custom_id = str(item.get("custom_id") or "")
         if not custom_id:
             continue
@@ -628,7 +647,12 @@ def _parse_batch_output_lines(text_data: str) -> dict[str, dict[str, str] | None
             logger.warning("batch line malformed id=%s body=%s", custom_id, body)
             parsed[custom_id] = None
             continue
-        json_obj = _parse_json(content)
+        try:
+            json_obj = _parse_json(content)
+        except Exception:  # noqa: BLE001
+            logger.warning("batch content parse failed id=%s", custom_id)
+            parsed[custom_id] = None
+            continue
         parsed[custom_id] = _validated_result_or_none(json_obj)
     return parsed
 
