@@ -258,6 +258,8 @@ def _generate_predictions_batch(
 ) -> list[str]:
     import torch
 
+    # Decoder-only models should use left padding for correct batched generation behavior.
+    tokenizer.padding_side = "left"
     encoded = tokenizer(prompts, return_tensors="pt", padding=True)
     input_ids = encoded["input_ids"].to(device)
     attention_mask = encoded.get("attention_mask")
@@ -276,10 +278,11 @@ def _generate_predictions_batch(
             eos_token_id=tokenizer.eos_token_id,
         )
 
-    input_lengths = attention_mask.sum(dim=1).tolist() if attention_mask is not None else [input_ids.shape[1]] * len(prompts)
+    # In batched generation, decoded continuation starts after the padded prompt width.
+    prompt_width = int(input_ids.shape[1])
     predictions: list[str] = []
-    for idx, in_len in enumerate(input_lengths):
-        gen_ids = out[idx][int(in_len) :]
+    for idx in range(len(prompts)):
+        gen_ids = out[idx][prompt_width:]
         predictions.append(tokenizer.decode(gen_ids, skip_special_tokens=True).strip())
     return predictions
 

@@ -99,7 +99,8 @@ def _run(args: argparse.Namespace) -> None:
 
     for idx, row in enumerate(rows, start=1):
         prompt = _build_prompt(row=row, task=args.task)
-        prompt_ids = tokenizer(prompt, return_tensors="pt")
+        tokenizer.padding_side = "left"
+        prompt_ids = tokenizer([prompt], return_tensors="pt", padding=True)
         input_ids = prompt_ids["input_ids"].to(device)
         attention_mask = prompt_ids.get("attention_mask")
         if attention_mask is not None:
@@ -119,7 +120,8 @@ def _run(args: argparse.Namespace) -> None:
             )
         dt = time.perf_counter() - t0
 
-        generated = out[0][input_ids.shape[1] :]
+        prompt_width = int(input_ids.shape[1])
+        generated = out[0][prompt_width:]
         token_count = int(generated.shape[0])
 
         if idx > warmup:
