@@ -68,6 +68,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--limit", type=int, default=200, help="Maximum rows to process in this run")
     parser.add_argument("--batch-size", type=int, default=20, help="Rows fetched per DB query page in --no-batch mode")
     parser.add_argument(
+        "--random",
+        action="store_true",
+        help="Select pending rows in random order instead of id order",
+    )
+    parser.add_argument(
         "--no-batch",
         action="store_true",
         help="Disable OpenAI Batch API and run one-by-one requests",
@@ -104,6 +109,8 @@ def run() -> int:
         args.batch_tag,
         args.batch_id,
     )
+    if args.random:
+        logger.info("row selection order=random")
 
     try:
         try:
@@ -122,6 +129,7 @@ def run() -> int:
                     limit=args.limit,
                     batch_size=args.batch_size,
                     debug=args.debug,
+                    random_order=args.random,
                 )
             else:
                 processed, updated = _run_batch_mode(
@@ -129,6 +137,7 @@ def run() -> int:
                     client=client,
                     write_batch_tag=args.batch_tag,
                     limit=args.limit,
+                    random_order=args.random,
                 )
         except KeyboardInterrupt:
             logger.warning("interrupted by user (Ctrl+C), exiting gracefully")
@@ -148,6 +157,7 @@ def _run_direct_mode(
     limit: int,
     batch_size: int,
     debug: bool,
+    random_order: bool,
 ) -> tuple[int, int]:
     processed = 0
     updated = 0
@@ -158,6 +168,7 @@ def _run_direct_mode(
         rows = _fetch_rows(
             engine=engine,
             limit=fetch_size,
+            random_order=random_order,
         )
         if not rows:
             break
@@ -189,10 +200,12 @@ def _run_batch_mode(
     client: OpenAI,
     write_batch_tag: str | None,
     limit: int,
+    random_order: bool,
 ) -> tuple[int, int]:
     rows = _fetch_rows(
         engine=engine,
         limit=limit,
+        random_order=random_order,
     )
     if not rows:
         logger.info("no rows selected for batch labeling")
@@ -347,6 +360,7 @@ def _resume_existing_batch(
 def _fetch_rows(
     engine,
     limit: int,
+    random_order: bool = False,
 ) -> list[dict[str, Any]]:
     where = ["1=1"]
     params: dict[str, Any] = {"limit_rows": limit}
@@ -371,7 +385,7 @@ def _fetch_rows(
             ns.review_notes
         FROM normalization_samples ns
         WHERE {' AND '.join(where)}
-        ORDER BY ns.id
+        ORDER BY {"RANDOM()" if random_order else "ns.id"}
         LIMIT :limit_rows
         """
     )

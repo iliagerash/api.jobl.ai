@@ -103,6 +103,12 @@ Label next pending rows and set a processing tag (OpenAI Batch API is default):
 jobl-normalize-llm-label --batch-tag=train_v1_0001 --limit=1000
 ```
 
+Randomly sample pending rows (useful for labeling new training batches):
+
+```bash
+jobl-normalize-llm-label --batch-tag=train_v1_0002 --limit=2000 --random
+```
+
 Resume polling/apply for an already submitted OpenAI batch:
 
 ```bash
