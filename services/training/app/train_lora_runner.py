@@ -7,6 +7,7 @@ from app.logging import configure_logging
 
 
 logger = logging.getLogger("jobl.training.train_lora")
+DEFAULT_BASE_MODEL = "microsoft/Phi-3-mini-4k-instruct"
 
 
 def parse_args() -> argparse.Namespace:
@@ -21,7 +22,7 @@ def parse_args() -> argparse.Namespace:
         default="data/sft/val.jsonl",
         help="Instruction val JSONL path",
     )
-    parser.add_argument("--model", default="microsoft/Phi-3-mini-4k-instruct", help="Base HF model id")
+    parser.add_argument("--model", default=None, help=f"Base HF model id (default: {DEFAULT_BASE_MODEL})")
     parser.add_argument("--out-dir", default="artifacts/lora-normalize-v1", help="Output directory")
     parser.add_argument("--epochs", type=float, default=2.0, help="Number of epochs")
     parser.add_argument("--batch-size", type=int, default=2, help="Per-device train batch size")
@@ -61,7 +62,10 @@ def _train(args: argparse.Namespace) -> None:
         ) from exc
 
     has_cuda = torch.cuda.is_available()
-    args = _apply_memory_safe_profile(args, has_cuda=has_cuda)
+    model_explicit = bool(args.model)
+    if not args.model:
+        args.model = DEFAULT_BASE_MODEL
+    args = _apply_memory_safe_profile(args, has_cuda=has_cuda, model_explicit=model_explicit)
 
     tokenizer = AutoTokenizer.from_pretrained(args.model, use_fast=True)
     if tokenizer.pad_token is None:
@@ -195,7 +199,7 @@ def _with_text_column(ds):
     )
 
 
-def _apply_memory_safe_profile(args: argparse.Namespace, *, has_cuda: bool) -> argparse.Namespace:
+def _apply_memory_safe_profile(args: argparse.Namespace, *, has_cuda: bool, model_explicit: bool) -> argparse.Namespace:
     if not args.memory_safe:
         if not has_cuda:
             logger.warning(
@@ -206,9 +210,9 @@ def _apply_memory_safe_profile(args: argparse.Namespace, *, has_cuda: bool) -> a
         return args
 
     # Conservative defaults for 32GB RAM CPU hosts.
-    if not has_cuda and args.model == "microsoft/Phi-3-mini-4k-instruct":
+    if not model_explicit and not has_cuda and args.model == "microsoft/Phi-3-mini-4k-instruct":
         args.model = "Qwen/Qwen2.5-0.5B-Instruct"
-    elif not has_cuda and args.model == "Qwen/Qwen2.5-3B-Instruct":
+    elif not model_explicit and not has_cuda and args.model == "Qwen/Qwen2.5-3B-Instruct":
         args.model = "Qwen/Qwen2.5-0.5B-Instruct"
     args.batch_size = 1
     args.grad_accum = max(args.grad_accum, 16)

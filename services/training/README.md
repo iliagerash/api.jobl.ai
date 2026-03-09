@@ -110,7 +110,9 @@ Arguments:
 - `--out-dir`: training output directory.
 - `--epochs`, `--batch-size`, `--grad-accum`, `--lr`, `--max-seq-len`: training hyperparameters.
 - `--memory-safe`: CPU-safe profile for low-memory hosts.
-  On CPU it switches default model to `Qwen/Qwen2.5-0.5B-Instruct`, forces `batch_size=1`,
+  On CPU it switches only the implicit default model to `Qwen/Qwen2.5-0.5B-Instruct`.
+  If you explicitly pass `--model`, it is preserved.
+  It also forces `batch_size=1`,
   increases gradient accumulation, caps sequence length, and limits epochs for first pilot.
 
 Outputs:
