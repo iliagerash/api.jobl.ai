@@ -524,6 +524,12 @@ class SyncWorker:
             return
         query = text(
             """
+            WITH cleanup AS (
+                DELETE FROM jobs
+                WHERE source_db = :source_db
+                  AND source_job_id = :source_job_id
+                  AND (site_id <> :site_id OR external_id <> :external_id)
+            )
             INSERT INTO jobs (
                 source_db,
                 source_job_id,
@@ -581,8 +587,9 @@ class SyncWorker:
                 :is_remote,
                 :is_active
             )
-            ON CONFLICT (source_db, source_job_id)
+            ON CONFLICT ON CONSTRAINT uq_jobs_source_external
             DO UPDATE SET
+                source_job_id = EXCLUDED.source_job_id,
                 site_id = EXCLUDED.site_id,
                 external_id = EXCLUDED.external_id,
                 title = EXCLUDED.title,
