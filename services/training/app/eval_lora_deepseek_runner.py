@@ -18,7 +18,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model", default=DEFAULT_DEEPSEEK_MODEL, help=f"Base HF model id (default: {DEFAULT_DEEPSEEK_MODEL})")
     parser.add_argument("--adapter-dir", default=DEFAULT_DEEPSEEK_ADAPTER_DIR, help="LoRA adapter directory")
     parser.add_argument("--limit", type=int, default=0, help="Max rows to evaluate, 0 means all")
-    parser.add_argument("--batch-size", type=int, default=1, help="Inference batch size")
+    parser.add_argument("--batch-size", type=int, default=8, help="Inference batch size")
     parser.add_argument("--max-new-tokens", type=int, default=768, help="Generation max_new_tokens")
     parser.add_argument(
         "--chunked",

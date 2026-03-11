@@ -50,9 +50,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument("--adapter-dir", default="artifacts/lora-normalize-v1/adapter", help="LoRA adapter directory")
     parser.add_argument("--limit", type=int, default=0, help="Max rows to evaluate, 0 means all")
-    parser.add_argument("--batch-size", type=int, default=1, help="Inference batch size")
+    parser.add_argument("--batch-size", type=int, default=8, help="Inference batch size")
     parser.add_argument("--max-new-tokens", type=int, default=768, help="Generation max_new_tokens")
-    parser.add_argument("--chunked", action="store_true", help="Chunk description_raw during eval inference")
+    parser.add_argument(
+        "--chunked",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Chunk description_raw during eval inference (default: true; use --no-chunked to disable)",
+    )
     parser.add_argument("--chunk-max-chars", type=int, default=3500, help="Max chars per chunk when --chunked")
     parser.add_argument("--temperature", type=float, default=0.0, help="Generation temperature")
     parser.add_argument("--progress-every", type=int, default=10, help="Log progress every N rows")
