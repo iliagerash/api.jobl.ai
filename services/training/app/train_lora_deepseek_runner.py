@@ -17,12 +17,12 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--train-jsonl",
-        default="data/sft_chunks/train.jsonl",
+        default="data/sft/train.jsonl",
         help="Instruction train JSONL path",
     )
     parser.add_argument(
         "--val-jsonl",
-        default="data/sft_chunks/val.jsonl",
+        default="data/sft/val.jsonl",
         help="Instruction val JSONL path",
     )
     parser.add_argument(

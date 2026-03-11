@@ -170,6 +170,7 @@ Purpose:
 
 Defaults:
 - Base model: `deepseek-ai/DeepSeek-R1-Distill-Qwen-7B` (alias for requested `deepseek-r1:7b`).
+- Train/val JSONL: `data/sft/train.jsonl` and `data/sft/val.jsonl` (non-chunked by default).
 - Output dir: `artifacts/lora-normalize-deepseek-r1-7b`.
 
 Example:
@@ -178,6 +179,7 @@ Example:
 jobl-training-train-lora-deepseek
 jobl-training-train-lora-deepseek --memory-safe
 jobl-training-train-lora-deepseek --model=deepseek-ai/DeepSeek-R1-Distill-Qwen-7B --epochs=2 --batch-size=2
+jobl-training-train-lora-deepseek --train-jsonl=data/sft_chunks/train.jsonl --val-jsonl=data/sft_chunks/val.jsonl
 ```
 
 ### `jobl-training-eval-lora`
