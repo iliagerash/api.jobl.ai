@@ -62,6 +62,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=0.0, help="Generation temperature")
     parser.add_argument("--progress-every", type=int, default=10, help="Log progress every N rows")
     parser.add_argument("--out-dir", default="artifacts/lora-normalize-v1/eval", help="Directory for evaluation artifacts")
+    parser.add_argument(
+        "--changed-titles-only",
+        dest="changed_titles_only",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Evaluate only rows where expected title differs from raw title (default: true; use --all-titles or --no-changed-titles-only to disable)",
+    )
+    parser.add_argument(
+        "--all-titles",
+        dest="changed_titles_only",
+        action="store_false",
+        help="Evaluate all rows, including unchanged titles",
+    )
     return parser.parse_args()
 
 
@@ -85,11 +98,24 @@ def _run_eval(args: argparse.Namespace) -> None:
     except ImportError as exc:
         raise SystemExit("Dependencies missing. Install with: pip install -e '.[train]'") from exc
 
-    rows = read_jsonl(Path(args.test_jsonl))
+    all_rows = read_jsonl(Path(args.test_jsonl))
+    skipped_unchanged_titles = 0
+    if args.changed_titles_only:
+        rows = [row for row in all_rows if _row_has_changed_title(row)]
+        skipped_unchanged_titles = len(all_rows) - len(rows)
+    else:
+        rows = all_rows
     if args.limit > 0:
         rows = rows[: args.limit]
     if not rows:
         raise SystemExit("No test rows found")
+    if args.changed_titles_only:
+        logger.info(
+            "eval row selection changed_titles_only=true selected=%s skipped_unchanged=%s source_total=%s",
+            len(rows),
+            skipped_unchanged_titles,
+            len(all_rows),
+        )
 
     has_cuda = torch.cuda.is_available()
     dtype = torch.bfloat16 if has_cuda else torch.float32
@@ -286,6 +312,10 @@ def _run_eval(args: argparse.Namespace) -> None:
         "adapter_dir": args.adapter_dir,
         "chunked": args.chunked,
         "chunk_max_chars": args.chunk_max_chars if args.chunked else None,
+        "changed_titles_only": bool(args.changed_titles_only),
+        "source_total_rows": len(all_rows),
+        "selected_rows": len(rows),
+        "skipped_unchanged_title_rows": skipped_unchanged_titles,
         "valid_json_rate": round(metrics["valid_json"] / metrics["total"], 4),
         "title_exact_rate": round(metrics["title_exact"] / metrics["total"], 4),
         "html_exact_rate": round(metrics["html_exact"] / metrics["total"], 4),
@@ -676,6 +706,25 @@ def _text_similarity(expected: str, predicted: str) -> float:
     if not exp and not pred:
         return 1.0
     return SequenceMatcher(a=exp, b=pred).ratio()
+
+
+def _row_has_changed_title(row: dict[str, Any]) -> bool:
+    messages = row.get("messages") or []
+    user_content = _message_content(messages, 1)
+    expected = _parse_assistant_target(row)
+    expected_title = _canonical_title(str(expected.get("title_normalized") or ""))
+    if not expected_title:
+        return False
+    try:
+        user_obj = json.loads(user_content)
+    except json.JSONDecodeError:
+        return True
+    raw_title = _canonical_title(str((user_obj or {}).get("title_raw") or ""))
+    return raw_title != expected_title
+
+
+def _canonical_title(value: str) -> str:
+    return re.sub(r"\s+", " ", (value or "").strip()).casefold()
 
 
 def _write_mismatches_csv(path: Path, rows: list[dict[str, Any]]) -> None:

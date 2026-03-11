@@ -30,6 +30,19 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=0.0, help="Generation temperature")
     parser.add_argument("--progress-every", type=int, default=10, help="Log progress every N rows")
     parser.add_argument("--out-dir", default=DEFAULT_DEEPSEEK_OUT_DIR, help="Directory for evaluation artifacts")
+    parser.add_argument(
+        "--changed-titles-only",
+        dest="changed_titles_only",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Evaluate only rows where expected title differs from raw title (default: true; use --all-titles or --no-changed-titles-only to disable)",
+    )
+    parser.add_argument(
+        "--all-titles",
+        dest="changed_titles_only",
+        action="store_false",
+        help="Evaluate all rows, including unchanged titles",
+    )
     return parser.parse_args()
 
 

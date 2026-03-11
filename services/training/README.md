@@ -198,6 +198,8 @@ Arguments:
 - `--max-new-tokens`, `--temperature`: inference params.
 - `--chunked`: run chunked inference for long `description_raw`.
   Default is enabled; use `--no-chunked` to disable.
+- `--changed-titles-only`: evaluate only rows where `title_raw` differs from expected normalized title.
+  Default is enabled; use `--all-titles` (or `--no-changed-titles-only`) to include unchanged rows.
 - `--chunk-max-chars`: max chars per input chunk (default `3500`).
 - `--progress-every`: progress log interval in rows (default `10`).
 - `--out-dir`: output artifacts directory (default `artifacts/lora-normalize-v1/eval`).
@@ -222,6 +224,7 @@ Example:
 ```bash
 jobl-training-eval-lora
 jobl-training-eval-lora --no-chunked
+jobl-training-eval-lora --all-titles
 jobl-training-eval-lora --limit=100 --out-dir=artifacts/lora-normalize-v1/eval_smoke
 jobl-training-eval-lora --progress-every=5
 jobl-training-eval-lora --batch-size=8 --max-new-tokens=256
@@ -238,11 +241,13 @@ Defaults:
 - Adapter dir: `artifacts/lora-normalize-deepseek-r1-7b/adapter`
 - Output dir: `artifacts/lora-normalize-deepseek-r1-7b/eval`
 - Chunked inference: enabled by default (`--chunked`, disable with `--no-chunked`)
+- Changed-title filtering: enabled by default (`--changed-titles-only`, disable with `--all-titles`)
 
 Examples:
 
 ```bash
 jobl-training-eval-lora-deepseek --limit=100 --progress-every=1
+jobl-training-eval-lora-deepseek --all-titles --limit=100
 jobl-training-eval-lora-deepseek --max-new-tokens=1024 --batch-size=4
 jobl-training-eval-lora-deepseek --no-chunked --max-new-tokens=1024 --batch-size=4
 jobl-training-eval-lora-deepseek --chunked --chunk-max-chars=3500 --batch-size=8 --max-new-tokens=1024
