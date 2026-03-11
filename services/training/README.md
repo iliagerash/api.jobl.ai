@@ -163,6 +163,23 @@ Memory-safe run (recommended on 32GB RAM CPU host):
 jobl-training-train-lora --memory-safe
 ```
 
+### `jobl-training-train-lora-deepseek`
+
+Purpose:
+- Runs the same LoRA SFT pipeline but with DeepSeek R1 7B defaults in a separate command/output path.
+
+Defaults:
+- Base model: `deepseek-ai/DeepSeek-R1-Distill-Qwen-7B` (alias for requested `deepseek-r1:7b`).
+- Output dir: `artifacts/lora-normalize-deepseek-r1-7b`.
+
+Example:
+
+```bash
+jobl-training-train-lora-deepseek
+jobl-training-train-lora-deepseek --memory-safe
+jobl-training-train-lora-deepseek --model=deepseek-ai/DeepSeek-R1-Distill-Qwen-7B --epochs=2 --batch-size=2
+```
+
 ### `jobl-training-eval-lora`
 
 Purpose:
