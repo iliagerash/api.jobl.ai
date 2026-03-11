@@ -9,6 +9,8 @@ logger = logging.getLogger("jobl.training.train_lora_deepseek")
 
 # User-facing alias "deepseek-r1:7b" mapped to Hugging Face model id used by transformers.
 DEFAULT_DEEPSEEK_MODEL = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
+DEFAULT_DEEPSEEK_OUT_DIR = "artifacts/lora-normalize-deepseek-r1-7b"
+LEGACY_DEFAULT_OUT_DIR = "artifacts/lora-normalize-v1"
 
 
 def parse_args() -> argparse.Namespace:
@@ -32,7 +34,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--out-dir",
-        default="artifacts/lora-normalize-deepseek-r1-7b",
+        default=DEFAULT_DEEPSEEK_OUT_DIR,
         help="Output directory",
     )
     parser.add_argument("--epochs", type=float, default=2.0, help="Number of epochs")
@@ -51,6 +53,13 @@ def parse_args() -> argparse.Namespace:
 def run() -> int:
     args = parse_args()
     configure_logging("INFO")
+    if str(args.out_dir).strip() == LEGACY_DEFAULT_OUT_DIR:
+        logger.warning(
+            "DeepSeek runner should not write to %s; switching to %s",
+            LEGACY_DEFAULT_OUT_DIR,
+            DEFAULT_DEEPSEEK_OUT_DIR,
+        )
+        args.out_dir = DEFAULT_DEEPSEEK_OUT_DIR
 
     try:
         _train(args)
