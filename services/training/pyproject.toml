@@ -31,6 +31,7 @@ jobl-training-build-chunks = "app.build_chunks_runner:run"
 jobl-training-train-lora = "app.train_lora_runner:run"
 jobl-training-train-lora-deepseek = "app.train_lora_deepseek_runner:run"
 jobl-training-eval-lora = "app.eval_lora_runner:run"
+jobl-training-eval-lora-deepseek = "app.eval_lora_deepseek_runner:run"
 
 [build-system]
 requires = ["setuptools>=68.0"]

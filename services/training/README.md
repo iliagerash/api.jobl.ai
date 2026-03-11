@@ -226,6 +226,26 @@ jobl-training-eval-lora --batch-size=8 --max-new-tokens=256
 jobl-training-eval-lora --chunked --chunk-max-chars=3500 --batch-size=8 --max-new-tokens=1024
 ```
 
+### `jobl-training-eval-lora-deepseek`
+
+Purpose:
+- Evaluates the DeepSeek adapter with DeepSeek-specific defaults.
+
+Defaults:
+- Base model: `deepseek-ai/DeepSeek-R1-Distill-Qwen-7B`
+- Adapter dir: `artifacts/lora-normalize-deepseek-r1-7b/adapter`
+- Output dir: `artifacts/lora-normalize-deepseek-r1-7b/eval`
+- Chunked inference: enabled by default (`--chunked`, disable with `--no-chunked`)
+
+Examples:
+
+```bash
+jobl-training-eval-lora-deepseek --limit=100 --progress-every=1
+jobl-training-eval-lora-deepseek --max-new-tokens=1024 --batch-size=4
+jobl-training-eval-lora-deepseek --no-chunked --max-new-tokens=1024 --batch-size=4
+jobl-training-eval-lora-deepseek --chunked --chunk-max-chars=3500 --batch-size=8 --max-new-tokens=1024
+```
+
 ## End-to-end quick run
 
 ```bash
