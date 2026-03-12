@@ -1,6 +1,7 @@
 import argparse
-import json
+import html
 import logging
+import re
 from pathlib import Path
 from typing import Any
 
@@ -10,17 +11,54 @@ from app.logging import configure_logging
 
 logger = logging.getLogger("jobl.training.build_jsonl")
 
-SYSTEM_PROMPT = (
-    "You normalize raw job data for a jobs platform. "
-    "Return strict JSON with exactly one key: title_normalized. "
-    "Output must be one JSON object only, with no markdown and no extra keys. "
-    "Use title_raw, description_raw, company_name, and location_context to infer the canonical role title. "
-    "Keep only the profession/role name; remove location, company, schedule, employment type, campaign text, salary, and dates. "
-    "If the title includes alternatives or qualifiers (for example '/', '-', '|', parentheses), keep the core role title. "
-    "Do not output fragments like 'early careers', 'new client acquisition', or 'executive' unless they are the actual role. "
-    "Preserve legally required markers when they are part of the role title (for example '(m/w/d)'). "
-    "Prefer a human-readable title in normal title case."
-)
+# Keep this pre-strip logic identical to production inference pre-strip behavior.
+PRE_STRIP_PATTERNS = [
+    (
+        "salary_rate_symbol",
+        re.compile(
+            r"[$€£]\s?\d[\d,k.]*\s?(/hr|/hour|/yr|/year|ph|pa)?",
+            re.IGNORECASE,
+        ),
+    ),
+    ("salary_rate_upto", re.compile(r"\bup\s?to\s?[$€£]\s?[\d,k.]+\b", re.IGNORECASE)),
+    ("job_code_hash", re.compile(r"\s*#[A-Z]{2,6}\b", re.IGNORECASE)),
+    ("numeric_job_code_parens", re.compile(r"\(\s*\d{4}[-–]\d{2,6}\s*\)", re.IGNORECASE)),
+    (
+        "employment_type",
+        re.compile(
+            r"full[\s-]?time|part[\s-]?time|casual|temp(orary)?|locum|fixed[\s-]?term|permanent|perm(?!\w)|on[\s-]?call|sur appel",
+            re.IGNORECASE,
+        ),
+    ),
+    ("early_careers", re.compile(r"early careers?|new\s?grad(uate)?", re.IGNORECASE)),
+    (
+        "campaign_text",
+        re.compile(
+            r"apply\s+now|hiring\s+now|no\s+experience\s+needed|start\s+your\s+career\s+with\s+us\s+today[!?]*|possibility\s+for\s+conversion\s+to\s+perm",
+            re.IGNORECASE,
+        ),
+    ),
+    ("multiple_positions", re.compile(r"\(?\bmultiple\s+positions?\b\)?", re.IGNORECASE)),
+    ("opportunities_suffix", re.compile(r"\bopportunities\b", re.IGNORECASE)),
+]
+
+COVERAGE_PATTERNS = {
+    "salary": re.compile(
+        r"[$€£]\s?\d[\d,k.]*\s?(/hr|/hour|/yr|/year|ph|pa)?|\bup\s?to\s?[$€£]\s?[\d,k.]+\b",
+        re.IGNORECASE,
+    ),
+    "job_code_hash": re.compile(r"\s*#[A-Z]{2,6}\b", re.IGNORECASE),
+    "employment_type": re.compile(
+        r"full[\s-]?time|part[\s-]?time|casual|temp(orary)?|locum|fixed[\s-]?term|permanent|perm(?!\w)|on[\s-]?call|sur appel",
+        re.IGNORECASE,
+    ),
+    "early_careers": re.compile(r"early careers?|new\s?grad(uate)?", re.IGNORECASE),
+    "multilingual": re.compile(
+        r"\b(emploi|poste|trabajo|puesto|lavoro|posizione|vaga|emprego|vacature|functie|stilling|fuldtid|deltid|híbrido|hibrido|hybride|sur appel)\b",
+        re.IGNORECASE,
+    ),
+    "location_in_title": re.compile(r"\b(remote|hybrid)\b", re.IGNORECASE),
+}
 
 
 def parse_args() -> argparse.Namespace:
@@ -43,7 +81,13 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Output instruction JSONL path (default: data/sft/<split>.jsonl)",
     )
-    parser.add_argument("--prompt-version", type=str, default="v2", help="Prompt version label")
+    parser.add_argument(
+        "--coverage-check",
+        dest="coverage_check",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="Warn when train-split noise-pattern coverage is below threshold",
+    )
     return parser.parse_args()
 
 
@@ -55,8 +99,10 @@ def run() -> int:
 
     try:
         rows = read_jsonl(input_path)
-        converted = [_convert_row(row, prompt_version=args.prompt_version) for row in rows]
+        converted = [_convert_row(row) for row in rows]
         write_jsonl(output_path, converted)
+        if args.coverage_check and args.split == "train":
+            _log_coverage(rows, min_rows=20)
     except KeyboardInterrupt:
         logger.warning("interrupted by user (Ctrl+C), exiting gracefully")
         return 130
@@ -65,47 +111,57 @@ def run() -> int:
     return 0
 
 
-def _convert_row(row: dict[str, Any], prompt_version: str) -> dict[str, Any]:
+def _convert_row(row: dict[str, Any]) -> dict[str, Any]:
     title_raw = row.get("title")
     if title_raw is None:
         title_raw = row.get("title_raw")
-    description_raw = row.get("description")
-    if description_raw is None:
-        description_raw = row.get("description_raw")
-
-    user_payload = {
-        "prompt_version": prompt_version,
-        "response_schema": {"title_normalized": "string"},
-        "response_rules": [
-            "Return valid JSON only.",
-            "Return exactly one key: title_normalized.",
-            "Do not include prompt_version, title_raw, description_raw, company_name, location_context, or any other keys.",
-            "Keep only the normalized role title, not location/company/salary/date/schedule text.",
-            "If multiple role-like phrases appear, choose the primary role described by title_raw + description_raw.",
-        ],
-        "title_raw": title_raw or "",
-        "description_raw": description_raw or "",
-        "company_name": row.get("company_name") or "",
-        "location_context": {
-            "language_code": row.get("language_code"),
-            "country_code": row.get("country_code"),
-            "country_name": row.get("country_name"),
-            "region_title": row.get("region_title"),
-            "city_title": row.get("city_title"),
-        },
-    }
-    target_payload = {
-        "title_normalized": row.get("expected_title_normalized") or "",
-    }
     return {
         "id": row.get("id"),
         "language_code": row.get("language_code"),
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
-            {"role": "assistant", "content": json.dumps(target_payload, ensure_ascii=False)},
-        ],
+        "input": "normalize job title: " + pre_strip(str(title_raw or "")),
+        "target": str(row.get("expected_title_normalized") or ""),
     }
+
+
+def pre_strip(title: str) -> str:
+    cleaned = html.unescape(str(title or ""))
+    for _name, pattern in PRE_STRIP_PATTERNS:
+        cleaned = pattern.sub(" ", cleaned)
+        cleaned = _cleanup_separators_and_spaces(cleaned)
+    return cleaned
+
+
+def _cleanup_separators_and_spaces(value: str) -> str:
+    cleaned = str(value or "")
+    while True:
+        previous = cleaned
+        cleaned = re.sub(r"^\s*[-–—|,]+\s*", "", cleaned)
+        cleaned = re.sub(r"\s*[-–—|,]+\s*$", "", cleaned)
+        cleaned = re.sub(r"\s+", " ", cleaned).strip()
+        if cleaned == previous:
+            break
+    return cleaned
+
+
+def _log_coverage(rows: list[dict[str, Any]], min_rows: int) -> None:
+    counts = {name: 0 for name in COVERAGE_PATTERNS}
+    for row in rows:
+        title_raw = row.get("title")
+        if title_raw is None:
+            title_raw = row.get("title_raw")
+        title_text = html.unescape(str(title_raw or ""))
+        for name, pattern in COVERAGE_PATTERNS.items():
+            if pattern.search(title_text):
+                counts[name] += 1
+
+    for name, count in counts.items():
+        if count < min_rows:
+            logger.warning(
+                "coverage check warning split=train pattern=%s matched_rows=%s threshold=%s",
+                name,
+                count,
+                min_rows,
+            )
 
 
 if __name__ == "__main__":
