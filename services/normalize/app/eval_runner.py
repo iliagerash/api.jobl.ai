@@ -38,12 +38,9 @@ def run() -> int:
 
             payload = []
             title_matches = 0
-            description_clean_matches = 0
-            description_html_matches = 0
 
             for row in rows:
-                title_raw = row.get("title_raw") or ""
-                description_raw = row.get("description_raw") or ""
+                title_raw = row.get("title") or ""
 
                 generated_title = normalizer._normalize_title(
                     title_raw,
@@ -53,40 +50,26 @@ def run() -> int:
                     country_name=row.get("country_name"),
                     country_alternate_names=row.get("country_alternate_names"),
                 )
-                generated_clean = normalizer._clean_description(description_raw)
-                generated_html = normalizer._to_safe_html(generated_clean)
 
                 title_match = _compute_match(row.get("expected_title_normalized"), generated_title)
-                description_clean_match = _compute_match(row.get("expected_description_clean"), generated_clean)
-                description_html_match = _compute_match(row.get("expected_description_html"), generated_html)
 
                 if title_match is True:
                     title_matches += 1
-                if description_clean_match is True:
-                    description_clean_matches += 1
-                if description_html_match is True:
-                    description_html_matches += 1
 
                 payload.append(
                     {
                         "id": row["id"],
                         "generated_title_normalized": generated_title,
-                        "generated_description_clean": generated_clean,
-                        "generated_description_html": generated_html,
                         "title_match": title_match,
-                        "description_clean_match": description_clean_match,
-                        "description_html_match": description_html_match,
                     }
                 )
 
             _update_rows(engine=engine, payload=payload)
 
             logger.info(
-                "evaluation completed rows=%s title_matches=%s description_clean_matches=%s description_html_matches=%s",
+                "evaluation completed rows=%s title_matches=%s",
                 len(payload),
                 title_matches,
-                description_clean_matches,
-                description_html_matches,
             )
         except KeyboardInterrupt:
             logger.warning("interrupted by user (Ctrl+C), exiting gracefully")
@@ -103,9 +86,7 @@ def _fetch_rows(engine, batch_tag: str | None, limit: int | None, only_pending: 
         where.append("ns.batch_tag = :batch_tag")
         params["batch_tag"] = batch_tag
     if only_pending:
-        where.append(
-            "(ns.generated_title_normalized IS NULL OR ns.generated_description_clean IS NULL OR ns.generated_description_html IS NULL)"
-        )
+        where.append("ns.generated_title_normalized IS NULL")
 
     limit_sql = ""
     if limit is not None and limit > 0:
@@ -116,11 +97,8 @@ def _fetch_rows(engine, batch_tag: str | None, limit: int | None, only_pending: 
         f"""
         SELECT
             ns.id,
-            ns.title_raw,
-            ns.description_raw,
+            ns.title,
             ns.expected_title_normalized,
-            ns.expected_description_clean,
-            ns.expected_description_html,
             ns.city_title,
             ns.region_title,
             ns.country_code,
@@ -145,11 +123,7 @@ def _update_rows(engine, payload: list[dict[str, object | None]]) -> None:
         """
         UPDATE normalization_samples
         SET generated_title_normalized = :generated_title_normalized,
-            generated_description_clean = :generated_description_clean,
-            generated_description_html = :generated_description_html,
             title_match = :title_match,
-            description_clean_match = :description_clean_match,
-            description_html_match = :description_html_match,
             updated_at = NOW()
         WHERE id = :id
         """

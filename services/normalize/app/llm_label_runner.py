@@ -1,4 +1,5 @@
 import argparse
+import html
 import json
 import logging
 import re
@@ -16,7 +17,6 @@ from app.logging import configure_logging
 
 
 logger = logging.getLogger("jobl.normalize.llm_label")
-TEMPLATE_TOKEN_RE = re.compile(r"\[#([A-Za-z0-9_]+)#\]")
 
 
 SYSTEM_PROMPT = """
@@ -24,22 +24,44 @@ You normalize raw job data for a jobs platform.
 
 Rules:
 - Work from raw inputs exactly as provided.
-- Do NOT include salaries, dates, addresses, company names, or location fragments in normalized title.
+- Return ONLY the cleaned role title in title_normalized.
+- Keep it concise, typically 1-4 words.
+- Do NOT include salaries, dates, addresses, company names, brand names, city/region/country fragments, store/location IDs, or hiring noise.
+- Do NOT include schedule/employment qualifiers in title_normalized (e.g. part-time, full-time, temporary, contract, seasonal, internship, remote, hybrid, on-site).
+- Do NOT include trailing descriptors separated by "-", "|", ",", ":" or "/" unless they are part of the role itself.
+- If company_name is provided and appears in the title, remove it from title_normalized.
+- You may use both title_raw and description_raw as context when deciding title_normalized.
 - Preserve legal title markers like (m/w/d), (m/f/d), (w/m/d), when present.
-- title_normalized: cleaned role title only, no location/company/salary/date noise.
-- description_html: clean HTML description.
-  Remove style/script/noise. Keep semantic content.
-  Allowed tags only: <p>, <ul>, <ol>, <li>, <i>, <b>, <em>, <strong>, <u>, <h2>, <h3>, <h4>, <br>, <a>.
-  Remove job-title repetition at the beginning of description_html.
-  If the first heading/paragraph is just the same as title_normalized (or a close variant), drop it.
-  Example to remove: <p><strong>Security Business Partner</strong></p> when title_normalized is "Security Business Partner".
-  Do not rewrite meaning and do not invent content.
+- title_normalized must be role-focused and readable to candidates.
+- If uncertain, choose the most likely role noun phrase and drop non-role text.
 - If uncertain, preserve information instead of hallucinating.
+
+Examples:
+Input:
+- title_raw: "Kiehl's since 1851 - Tigard, OR - Part-time Skincare Sales"
+- company_name: "Kiehl's since 1851"
+Output:
+- title_normalized: "Keyholder"
+
+Input:
+- title_raw: "Senior Accountant (m/f/d) - Berlin - Full-time"
+- company_name: "Acme GmbH"
+Output:
+- title_normalized: "Senior Accountant (m/f/d)"
+
+Input:
+- title_raw: "Nurse Practitioner | Phoenix AZ | $120k-$140k"
+Output:
+- title_normalized: "Nurse Practitioner"
+
+Input:
+- title_raw: "Software Engineer - Remote"
+Output:
+- title_normalized: "Software Engineer"
 
 Return strict JSON with keys:
 {
-  "title_normalized": string,
-  "description_html": string
+  "title_normalized": string
 }
 """.strip()
 
@@ -51,34 +73,33 @@ RESPONSE_JSON_SCHEMA = {
         "type": "object",
         "properties": {
             "title_normalized": {"type": "string"},
-            "description_html": {"type": "string"},
         },
-        "required": ["title_normalized", "description_html"],
+        "required": ["title_normalized"],
         "additionalProperties": False,
     },
 }
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Label normalization_samples with OpenAI LLM output")
+    parser = argparse.ArgumentParser(description="Process normalization_samples titles with OpenAI Flex processing")
     parser.add_argument("--batch-tag", type=str, default=None, help="Set/overwrite batch_tag for processed rows")
-    parser.add_argument("--batch-id", type=str, default=None, help="Resume polling and apply an existing OpenAI batch id")
     parser.add_argument("--limit", type=int, default=200, help="Maximum rows to process in this run")
-    parser.add_argument("--batch-size", type=int, default=20, help="Rows fetched per DB query page in --no-batch mode")
+    parser.add_argument("--batch-size", type=int, default=20, help="Rows fetched per DB query page")
     parser.add_argument(
         "--random",
         action="store_true",
         help="Select pending rows in random order instead of id order",
     )
     parser.add_argument(
-        "--no-batch",
-        action="store_true",
-        help="Disable OpenAI Batch API and run one-by-one requests",
+        "--service-tier",
+        choices=["flex", "auto", "default", "priority"],
+        default="flex",
+        help="OpenAI service tier used for title processing requests (default: flex)",
     )
     parser.add_argument(
         "--debug",
         action="store_true",
-        help="Print full prompt and full raw response (only with --no-batch)",
+        help="Print full prompt and full raw response",
     )
     return parser.parse_args()
 
@@ -88,55 +109,35 @@ def run() -> int:
     configure_logging(settings.log_level)
 
     if not settings.openai_api_key:
-        raise SystemExit("OPENAI_API_KEY is required for jobl-normalize-llm-label")
-    if args.debug and not args.no_batch:
-        raise SystemExit("--debug is supported only with --no-batch")
-    if args.batch_id and args.no_batch:
-        raise SystemExit("--batch-id cannot be used with --no-batch")
+        raise SystemExit("OPENAI_API_KEY is required for jobl-normalize-process-titles")
 
     client = OpenAI(api_key=settings.openai_api_key, timeout=settings.openai_timeout_seconds)
     engine = create_engine(settings.target_database_url, pool_pre_ping=True)
     logger.info(
-        "llm label started mode=%s model=%s prompt_version=%s limit=%s batch_size=%s overwrite=%s batch_tag=%s batch_id=%s",
-        "resume" if args.batch_id else ("direct" if args.no_batch else "batch"),
+        "llm label started mode=flex_direct model=%s prompt_version=%s service_tier=%s limit=%s batch_size=%s overwrite=%s batch_tag=%s",
         settings.openai_model,
         settings.llm_prompt_version,
+        args.service_tier,
         args.limit,
         args.batch_size,
         False,
         args.batch_tag,
-        args.batch_id,
     )
     if args.random:
         logger.info("row selection order=random")
 
     try:
         try:
-            if args.batch_id:
-                processed, updated = _resume_existing_batch(
-                    engine=engine,
-                    client=client,
-                    batch_id=args.batch_id,
-                    write_batch_tag=args.batch_tag,
-                )
-            elif args.no_batch:
-                processed, updated = _run_direct_mode(
-                    engine=engine,
-                    client=client,
-                    write_batch_tag=args.batch_tag,
-                    limit=args.limit,
-                    batch_size=args.batch_size,
-                    debug=args.debug,
-                    random_order=args.random,
-                )
-            else:
-                processed, updated = _run_batch_mode(
-                    engine=engine,
-                    client=client,
-                    write_batch_tag=args.batch_tag,
-                    limit=args.limit,
-                    random_order=args.random,
-                )
+            processed, updated = _run_direct_mode(
+                engine=engine,
+                client=client,
+                write_batch_tag=args.batch_tag,
+                limit=args.limit,
+                batch_size=args.batch_size,
+                debug=args.debug,
+                random_order=args.random,
+                service_tier=args.service_tier,
+            )
         except KeyboardInterrupt:
             logger.warning("interrupted by user (Ctrl+C), exiting gracefully")
             return 130
@@ -156,6 +157,7 @@ def _run_direct_mode(
     batch_size: int,
     debug: bool,
     random_order: bool,
+    service_tier: str,
 ) -> tuple[int, int]:
     processed = 0
     updated = 0
@@ -173,7 +175,7 @@ def _run_direct_mode(
 
         payload: list[dict[str, Any]] = []
         for row in rows:
-            result = _label_row_direct(client=client, row=row, debug=debug)
+            result = _label_row_direct(client=client, row=row, debug=debug, service_tier=service_tier)
             payload.append(_result_to_db_payload(row=row, result=result, write_batch_tag=write_batch_tag))
 
         _update_rows(engine=engine, payload=payload)
@@ -371,18 +373,16 @@ def _fetch_rows(
     where = ["1=1"]
     params: dict[str, Any] = {"limit_rows": limit}
     where.append(
-        "("
-        "ns.expected_title_normalized IS NULL OR "
-        "ns.expected_description_html IS NULL"
-        ")"
+        "ns.expected_title_normalized IS NULL"
     )
 
     query = text(
         f"""
         SELECT
             ns.id,
-            ns.title_raw,
-            ns.description_raw,
+            ns.title,
+            ns.description,
+            ns.company_name,
             ns.country_code,
             ns.language_code,
             ns.country_name,
@@ -408,8 +408,9 @@ def _fetch_rows_by_ids(engine, ids: list[int]) -> list[dict[str, Any]]:
         """
         SELECT
             ns.id,
-            ns.title_raw,
-            ns.description_raw,
+            ns.title,
+            ns.description,
+            ns.company_name,
             ns.country_code,
             ns.language_code,
             ns.country_name,
@@ -426,11 +427,17 @@ def _fetch_rows_by_ids(engine, ids: list[int]) -> list[dict[str, Any]]:
         return [dict(row) for row in rows]
 
 
-def _label_row_direct(client: OpenAI, row: dict[str, Any], debug: bool = False) -> dict[str, str]:
+def _label_row_direct(
+    client: OpenAI,
+    row: dict[str, Any],
+    debug: bool = False,
+    service_tier: str = "flex",
+) -> dict[str, str]:
     user_payload = {
         "prompt_version": settings.llm_prompt_version,
-        "title_raw": row.get("title_raw") or "",
-        "description_raw": _sanitize_input_for_llm(row.get("description_raw")),
+        "title_raw": row.get("title") or "",
+        "description_raw": _sanitize_description_for_llm(row.get("description")),
+        "company_name": row.get("company_name") or "",
         "location_context": {
             "language_code": row.get("language_code"),
             "country_code": row.get("country_code"),
@@ -457,6 +464,7 @@ def _label_row_direct(client: OpenAI, row: dict[str, Any], debug: bool = False) 
                     {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
                 ],
                 text={"format": RESPONSE_JSON_SCHEMA},
+                service_tier=service_tier,
             )
             content = _extract_text_from_responses_object(resp).strip()
             if debug:
@@ -479,8 +487,9 @@ def _label_row_direct(client: OpenAI, row: dict[str, Any], debug: bool = False) 
 def _build_batch_request(row: dict[str, Any]) -> dict[str, Any]:
     user_payload = {
         "prompt_version": settings.llm_prompt_version,
-        "title_raw": row.get("title_raw") or "",
-        "description_raw": _sanitize_input_for_llm(row.get("description_raw")),
+        "title_raw": row.get("title") or "",
+        "description_raw": _sanitize_description_for_llm(row.get("description")),
+        "company_name": row.get("company_name") or "",
         "location_context": {
             "language_code": row.get("language_code"),
             "country_code": row.get("country_code"),
@@ -546,7 +555,6 @@ def _update_rows(engine, payload: list[dict[str, Any]]) -> None:
         """
         UPDATE normalization_samples
         SET expected_title_normalized = :expected_title_normalized,
-            expected_description_html = :expected_description_html,
             batch_tag = COALESCE(:batch_tag, batch_tag),
             review_notes = :review_notes,
             updated_at = NOW()
@@ -583,7 +591,6 @@ def _result_to_db_payload(
     return {
         "id": row["id"],
         "expected_title_normalized": _sanitize_text_for_postgres(result["title_normalized"]),
-        "expected_description_html": _sanitize_text_for_postgres(result["description_html"]),
         "batch_tag": write_batch_tag,
         "review_notes": _sanitize_text_for_postgres(
             _merge_review_notes(
@@ -711,12 +718,10 @@ def _extract_text_from_response_body(body: Any) -> str:
 
 def _validated_result_or_none(data: dict[str, Any]) -> dict[str, str] | None:
     title = str(data.get("title_normalized") or "").strip()
-    html = str(data.get("description_html") or "").strip()
-    if not title or not html:
+    if not title:
         return None
     return {
         "title_normalized": title,
-        "description_html": html,
     }
 
 
@@ -745,8 +750,28 @@ def _sanitize_input_for_llm(value: Any) -> str:
     text_value = str(value or "")
     if "\x00" in text_value:
         text_value = text_value.replace("\x00", "")
-    # Escape scraper template placeholders (e.g. [#IABV2_TITLE#]) so they are treated as plain text.
-    return TEMPLATE_TOKEN_RE.sub(r"&#91;#\1#&#93;", text_value)
+    return text_value
+
+
+def _sanitize_description_for_llm(value: Any) -> str:
+    text_value = _sanitize_input_for_llm(value)
+    text_value = html.unescape(text_value)
+    text_value = re.sub(
+        r"<\s*script\b[^>]*>.*?<\s*/\s*script\s*>",
+        " ",
+        text_value,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    text_value = re.sub(
+        r"<\s*style\b[^>]*>.*?<\s*/\s*style\s*>",
+        " ",
+        text_value,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    text_value = re.sub(r"<!--.*?-->", " ", text_value, flags=re.DOTALL)
+    text_value = re.sub(r"<[^>]+>", " ", text_value)
+    text_value = re.sub(r"\s+", " ", text_value).strip()
+    return text_value
 
 
 if __name__ == "__main__":

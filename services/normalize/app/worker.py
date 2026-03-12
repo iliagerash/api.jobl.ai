@@ -1,4 +1,3 @@
-import html
 import logging
 import re
 from dataclasses import dataclass
@@ -81,8 +80,7 @@ class NormalizeWorker:
                 payload = []
                 for row in rows:
                     title = row["title"] or ""
-                    description = row["description"] or ""
-                    title_normalized = self._normalize_title(
+                    title_clean = self._normalize_title(
                         title,
                         city_title=row.get("city_title"),
                         region_title=row.get("region_title"),
@@ -90,15 +88,11 @@ class NormalizeWorker:
                         country_name=row.get("country_name"),
                         country_alternate_names=row.get("country_alternate_names"),
                     )
-                    description_clean = self._clean_description(description)
-                    description_html = self._to_safe_html(description_clean)
 
                     payload.append(
                         {
                             "id": row["id"],
-                            "title_normalized": title_normalized,
-                            "description_clean": description_clean,
-                            "description_html": description_html,
+                            "title_clean": title_clean,
                         }
                     )
 
@@ -129,7 +123,6 @@ class NormalizeWorker:
             SELECT
                 j.id,
                 j.title,
-                j.description,
                 j.city_title,
                 j.region_title,
                 j.country_code,
@@ -138,7 +131,7 @@ class NormalizeWorker:
             FROM jobs
             LEFT JOIN countries c ON c.code = j.country_code
             WHERE id > :from_id
-              AND (title_normalized IS NULL OR description_clean IS NULL OR description_html IS NULL)
+              AND title_clean IS NULL
             ORDER BY id
             LIMIT :batch_size
             """
@@ -153,9 +146,7 @@ class NormalizeWorker:
         query = text(
             """
             UPDATE jobs
-            SET title_normalized = :title_normalized,
-                description_clean = :description_clean,
-                description_html = :description_html
+            SET title_clean = :title_clean
             WHERE id = :id
             """
         )
@@ -319,40 +310,3 @@ class NormalizeWorker:
         title = re.sub(r"\s+", " ", title)
         title = re.sub(r"\s*[-|,/:]+\s*$", "", title)
         return title.strip(" -|,:/")
-
-    @staticmethod
-    def _clean_description(value: str) -> str:
-        text_value = value or ""
-        text_value = html.unescape(html.unescape(text_value))
-        text_value = re.sub(
-            r"<\s*script\b[^>]*>.*?<\s*/\s*script\s*>",
-            " ",
-            text_value,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        text_value = re.sub(
-            r"<\s*style\b[^>]*>.*?<\s*/\s*style\s*>",
-            " ",
-            text_value,
-            flags=re.IGNORECASE | re.DOTALL,
-        )
-        text_value = re.sub(r"<!--.*?-->", " ", text_value, flags=re.DOTALL)
-        text_value = re.sub(r"<\s*br\s*/?\s*>", "\n", text_value, flags=re.IGNORECASE)
-        text_value = re.sub(r"<\s*/\s*(p|div|h[1-6]|section|article)\s*>", "\n\n", text_value, flags=re.IGNORECASE)
-        text_value = re.sub(r"<\s*li\b[^>]*>", "\n- ", text_value, flags=re.IGNORECASE)
-        text_value = re.sub(r"<\s*/\s*li\s*>", "\n", text_value, flags=re.IGNORECASE)
-        text_value = re.sub(r"<[^>]+>", " ", text_value)
-        text_value = text_value.replace("\u00a0", " ")
-        text_value = re.sub(r"[ \t]+", " ", text_value)
-        text_value = re.sub(r"\s+\n", "\n", text_value)
-        text_value = re.sub(r"\n\s+", "\n", text_value)
-        text_value = re.sub(r"\n{3,}", "\n\n", text_value)
-        return text_value.strip()
-
-    @staticmethod
-    def _to_safe_html(clean_text: str) -> str:
-        if not clean_text:
-            return "<p></p>"
-        paragraphs = [p.strip() for p in clean_text.split("\n\n") if p.strip()]
-        html_parts = [f"<p>{html.escape(p).replace(chr(10), '<br>')}</p>" for p in paragraphs]
-        return "".join(html_parts) if html_parts else "<p></p>"

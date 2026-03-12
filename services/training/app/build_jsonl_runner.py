@@ -12,11 +12,9 @@ logger = logging.getLogger("jobl.training.build_jsonl")
 
 SYSTEM_PROMPT = (
     "You normalize raw job data for a jobs platform. "
-    "Return strict JSON with fields title_normalized and description_html. "
+    "Return strict JSON with field title_normalized. "
     "Do not include location/company/salary/date noise in title_normalized. "
-    "Preserve legal markers like (m/w/d). "
-    "For description_html keep only safe tags: "
-    "<p>, <ul>, <ol>, <li>, <i>, <b>, <em>, <strong>, <u>, <h2>, <h3>, <h4>, <br>, <a>."
+    "Preserve legal markers like (m/w/d)."
 )
 
 
@@ -66,7 +64,6 @@ def _convert_row(row: dict[str, Any], prompt_version: str) -> dict[str, Any]:
     user_payload = {
         "prompt_version": prompt_version,
         "title_raw": row.get("title_raw") or "",
-        "description_raw": row.get("description_raw") or "",
         "location_context": {
             "language_code": row.get("language_code"),
             "country_code": row.get("country_code"),
@@ -77,7 +74,6 @@ def _convert_row(row: dict[str, Any], prompt_version: str) -> dict[str, Any]:
     }
     target_payload = {
         "title_normalized": row.get("expected_title_normalized") or "",
-        "description_html": row.get("expected_description_html") or "",
     }
     return {
         "id": row.get("id"),

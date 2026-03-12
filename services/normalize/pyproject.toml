@@ -16,11 +16,9 @@ dev = [
 ]
 
 [project.scripts]
-jobl-normalize = "app.main:run"
-jobl-normalize-sample = "app.sample_builder:run"
-jobl-normalize-eval = "app.eval_runner:run"
-jobl-normalize-ml-title = "app.ml_title_runner:run"
-jobl-normalize-llm-label = "app.llm_label_runner:run"
+jobl-normalize-extract-samples = "app.sample_builder:run"
+jobl-normalize-process-emails = "app.process_emails_runner:run"
+jobl-normalize-process-titles = "app.llm_label_runner:run"
 
 [build-system]
 requires = ["setuptools>=68.0"]

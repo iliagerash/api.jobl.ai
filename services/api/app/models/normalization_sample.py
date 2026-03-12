@@ -29,20 +29,16 @@ class NormalizationSample(Base):
     site_id: Mapped[int | None] = mapped_column(SMALLINT, nullable=True)
     source_job_id: Mapped[int | None] = mapped_column(BIGINT, nullable=True)
     url: Mapped[str | None] = mapped_column(TEXT, nullable=True)
-    title_raw: Mapped[str] = mapped_column(TEXT, nullable=False)
-    description_raw: Mapped[str] = mapped_column(TEXT, nullable=False)
+    company_name: Mapped[str | None] = mapped_column(VARCHAR(255), nullable=True)
+    email: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    title: Mapped[str] = mapped_column(TEXT, nullable=False)
+    description: Mapped[str] = mapped_column(TEXT, nullable=False)
 
     expected_title_normalized: Mapped[str | None] = mapped_column(TEXT, nullable=True)
-    expected_description_clean: Mapped[str | None] = mapped_column(TEXT, nullable=True)
-    expected_description_html: Mapped[str | None] = mapped_column(TEXT, nullable=True)
 
     generated_title_normalized: Mapped[str | None] = mapped_column(TEXT, nullable=True)
-    generated_description_clean: Mapped[str | None] = mapped_column(TEXT, nullable=True)
-    generated_description_html: Mapped[str | None] = mapped_column(TEXT, nullable=True)
 
     title_match: Mapped[bool | None] = mapped_column(BOOLEAN, nullable=True)
-    description_clean_match: Mapped[bool | None] = mapped_column(BOOLEAN, nullable=True)
-    description_html_match: Mapped[bool | None] = mapped_column(BOOLEAN, nullable=True)
 
     review_status: Mapped[str] = mapped_column(VARCHAR(20), nullable=False, server_default="pending")
     review_notes: Mapped[str | None] = mapped_column(TEXT, nullable=True)

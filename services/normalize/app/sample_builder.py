@@ -1,7 +1,7 @@
 import argparse
 import logging
-import math
 from datetime import datetime, timezone
+from typing import Any
 
 from sqlalchemy import create_engine, text
 
@@ -9,36 +9,15 @@ from app.config import settings
 from app.logging import configure_logging
 
 
-logger = logging.getLogger("jobl.normalize.sample")
+logger = logging.getLogger("jobl.normalize.extract_samples")
 
-LANGUAGE_ORDER = ["en", "es", "de", "fr", "pt", "it", "gr", "nl", "da", "uk"]
-DEFAULT_LANGUAGE_WEIGHTS = {
-    "en": 0.45,
-    "es": 0.20,
-    "de": 0.10,
-    "fr": 0.08,
-    "pt": 0.08,
-    "it": 0.03,
-    "gr": 0.02,
-    "nl": 0.015,
-    "da": 0.01,
-    "uk": 0.015,
-}
+COUNTRY_CODES = ["US", "CA", "GB", "AU", "NZ", "SG"]
+LANGUAGE_CODES = ["en", "fr"]
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Build normalization samples from jobs table by language proportions")
-    parser.add_argument(
-        "--total",
-        type=int,
-        default=50000,
-        help="Total target sample size across languages",
-    )
-    parser.add_argument(
-        "--replace",
-        action="store_true",
-        help="Delete all existing rows from normalization_samples before insert",
-    )
+    parser = argparse.ArgumentParser(description="Extract normalization samples from jobs table")
+    parser.add_argument("--limit", type=int, default=1000, help="Total number of rows to extract")
     return parser.parse_args()
 
 
@@ -46,141 +25,277 @@ def run() -> int:
     args = parse_args()
     configure_logging(settings.log_level)
 
-    batch_tag = f"sample_lang_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
-    total = max(1, args.total)
-    targets = _build_language_targets(total)
+    limit = max(1, int(args.limit))
+    country_targets = _build_country_targets(limit)
+    batch_tag = f"extract_samples_{datetime.now(timezone.utc).strftime('%Y%m%d_%H%M%S')}"
 
     logger.info(
-        "sample builder started total=%s batch_tag=%s replace=%s targets=%s",
-        total,
+        "extract samples started limit=%s batch_tag=%s countries=%s languages=%s",
+        limit,
         batch_tag,
-        args.replace,
-        ", ".join(f"{k}:{v}" for k, v in targets.items()),
+        ",".join(COUNTRY_CODES),
+        ",".join(LANGUAGE_CODES),
     )
 
     engine = create_engine(settings.target_database_url, pool_pre_ping=True)
     try:
         try:
-            with engine.begin() as conn:
-                if args.replace:
-                    conn.execute(text("DELETE FROM normalization_samples"))
-
-                conn.execute(
-                    text(
-                        """
-                        WITH targets(language_code, target_n) AS (
-                            VALUES
-                                ('en', :target_en),
-                                ('es', :target_es),
-                                ('de', :target_de),
-                                ('fr', :target_fr),
-                                ('pt', :target_pt),
-                                ('it', :target_it),
-                                ('gr', :target_gr),
-                                ('nl', :target_nl),
-                                ('da', :target_da),
-                                ('uk', :target_uk)
-                        ),
-                        source_lang AS (
-                            SELECT
-                                j.id,
-                                j.language_code AS language_code
-                            FROM jobs j
-                            WHERE j.country_code IS NOT NULL
-                              AND COALESCE(BTRIM(j.title), '') <> ''
-                              AND COALESCE(BTRIM(j.description), '') <> ''
-                        ),
-                        ranked AS (
-                            SELECT
-                                s.id,
-                                s.language_code,
-                                ROW_NUMBER() OVER (PARTITION BY s.language_code ORDER BY RANDOM()) AS rn
-                            FROM source_lang s
-                            WHERE s.language_code IN ('en', 'es', 'de', 'fr', 'pt', 'it', 'gr', 'nl', 'da', 'uk')
-                        )
-                        INSERT INTO normalization_samples (
-                            source_db,
-                            country_code,
-                            language_code,
-                            country_name,
-                            city_title,
-                            region_title,
-                            site_id,
-                            source_job_id,
-                            url,
-                            title_raw,
-                            description_raw,
-                            batch_tag
-                        )
-                        SELECT
-                            j.source_db,
-                            j.country_code,
-                            r.language_code,
-                            c.name AS country_name,
-                            j.city_title,
-                            j.region_title,
-                            j.site_id,
-                            j.source_job_id,
-                            j.url,
-                            j.title,
-                            j.description,
-                            :batch_tag
-                        FROM ranked r
-                        JOIN targets t ON t.language_code = r.language_code
-                        JOIN jobs j ON j.id = r.id
-                        LEFT JOIN countries c ON c.code = j.country_code
-                        WHERE r.rn <= t.target_n
-                        """
-                    ),
-                    {
-                        "batch_tag": batch_tag,
-                        "target_en": targets["en"],
-                        "target_es": targets["es"],
-                        "target_de": targets["de"],
-                        "target_fr": targets["fr"],
-                        "target_pt": targets["pt"],
-                        "target_it": targets["it"],
-                        "target_gr": targets["gr"],
-                        "target_nl": targets["nl"],
-                        "target_da": targets["da"],
-                        "target_uk": targets["uk"],
-                    },
-                )
-
-            with engine.connect() as conn:
-                rows = conn.execute(
-                    text(
-                        """
-                        SELECT language_code, COUNT(*) AS n
-                        FROM normalization_samples
-                        WHERE batch_tag = :batch_tag
-                        GROUP BY language_code
-                        ORDER BY language_code
-                        """
-                    ),
-                    {"batch_tag": batch_tag},
-                ).mappings()
-                counts = [f"{row['language_code']}={row['n']}" for row in rows]
-
-            logger.info("sample builder completed batch_tag=%s languages=%s", batch_tag, ", ".join(counts))
+            inserted = _extract_and_insert(engine=engine, batch_tag=batch_tag, country_targets=country_targets)
+            logger.info("extract samples completed inserted=%s batch_tag=%s", inserted, batch_tag)
         except KeyboardInterrupt:
             logger.warning("interrupted by user (Ctrl+C), exiting gracefully")
             return 130
     finally:
         engine.dispose()
+
     return 0
 
 
-def _build_language_targets(total: int) -> dict[str, int]:
-    weighted = {k: total * DEFAULT_LANGUAGE_WEIGHTS[k] for k in LANGUAGE_ORDER}
-    base = {k: int(math.floor(v)) for k, v in weighted.items()}
-    remainder = total - sum(base.values())
-    if remainder > 0:
-        frac_sorted = sorted(
-            LANGUAGE_ORDER,
-            key=lambda code: weighted[code] - base[code],
-            reverse=True,
+def _extract_and_insert(*, engine, batch_tag: str, country_targets: dict[str, int]) -> int:
+    selected_rows: list[dict[str, Any]] = []
+
+    with engine.connect() as conn:
+        for country_code in COUNTRY_CODES:
+            country_limit = int(country_targets.get(country_code, 0))
+            if country_limit <= 0:
+                continue
+
+            with_at_target, without_at_target = _split_at_targets(country_limit)
+            country_rows: list[dict[str, Any]] = []
+
+            if with_at_target > 0:
+                with_at_rows = _fetch_country_rows(
+                    conn=conn,
+                    country_code=country_code,
+                    limit=with_at_target,
+                    has_at=True,
+                    exclude_ids=set(),
+                )
+                country_rows.extend(with_at_rows)
+
+            if without_at_target > 0:
+                without_at_rows = _fetch_country_rows(
+                    conn=conn,
+                    country_code=country_code,
+                    limit=without_at_target,
+                    has_at=False,
+                    exclude_ids={int(row["id"]) for row in country_rows},
+                )
+                country_rows.extend(without_at_rows)
+
+            missing = country_limit - len(country_rows)
+            if missing > 0:
+                topup_rows = _fetch_country_rows(
+                    conn=conn,
+                    country_code=country_code,
+                    limit=missing,
+                    has_at=None,
+                    exclude_ids={int(row["id"]) for row in country_rows},
+                )
+                country_rows.extend(topup_rows)
+
+            at_count = sum(1 for row in country_rows if "@" in str(row.get("description") or ""))
+            logger.info(
+                "country sampled country=%s target=%s selected=%s with_at=%s without_at=%s",
+                country_code,
+                country_limit,
+                len(country_rows),
+                at_count,
+                len(country_rows) - at_count,
+            )
+
+            for row in country_rows:
+                row["batch_tag"] = batch_tag
+            selected_rows.extend(country_rows)
+
+        total_target = sum(int(v) for v in country_targets.values())
+        missing = total_target - len(selected_rows)
+        if missing > 0:
+            topup_rows = _fetch_topup_rows(
+                conn=conn,
+                limit=missing,
+                exclude_ids={int(row["id"]) for row in selected_rows},
+            )
+            for row in topup_rows:
+                row["batch_tag"] = batch_tag
+            selected_rows.extend(topup_rows)
+            logger.info(
+                "global top-up requested=%s selected=%s",
+                missing,
+                len(topup_rows),
+            )
+
+    if not selected_rows:
+        logger.info("no eligible rows matched extraction criteria")
+        return 0
+
+    insert_query = text(
+        """
+        INSERT INTO normalization_samples (
+            source_db,
+            country_code,
+            language_code,
+            country_name,
+            city_title,
+            region_title,
+            site_id,
+            source_job_id,
+            url,
+            company_name,
+            title,
+            description,
+            batch_tag
         )
-        for code in frac_sorted[:remainder]:
-            base[code] += 1
-    return base
+        VALUES (
+            :source_db,
+            :country_code,
+            :language_code,
+            :country_name,
+            :city_title,
+            :region_title,
+            :site_id,
+            :source_job_id,
+            :url,
+            :company_name,
+            :title,
+            :description,
+            :batch_tag
+        )
+        """
+    )
+
+    with engine.begin() as conn:
+        conn.execute(insert_query, selected_rows)
+
+    return len(selected_rows)
+
+
+def _fetch_country_rows(
+    *,
+    conn,
+    country_code: str,
+    limit: int,
+    has_at: bool | None,
+    exclude_ids: set[int],
+) -> list[dict[str, Any]]:
+    if limit <= 0:
+        return []
+
+    where = [
+        "j.country_code = :country_code",
+        "j.language_code IN ('en', 'fr')",
+        "COALESCE(BTRIM(j.title), '') <> ''",
+        "COALESCE(BTRIM(j.description), '') <> ''",
+    ]
+    params: dict[str, Any] = {
+        "country_code": country_code,
+        "limit_rows": limit,
+    }
+
+    if has_at is True:
+        where.append("POSITION('@' IN j.description) > 0")
+    elif has_at is False:
+        where.append("POSITION('@' IN j.description) = 0")
+
+    if exclude_ids:
+        exclude_sql = ",".join(str(int(v)) for v in sorted(exclude_ids))
+        where.append(f"j.id NOT IN ({exclude_sql})")
+
+    query = text(
+        f"""
+        SELECT
+            j.id,
+            j.source_db,
+            j.country_code,
+            j.language_code,
+            c.name AS country_name,
+            j.city_title,
+            j.region_title,
+            j.site_id,
+            j.source_job_id,
+            j.url,
+            j.company_name,
+            j.title AS title,
+            j.description AS description
+        FROM jobs j
+        LEFT JOIN countries c ON c.code = j.country_code
+        WHERE {' AND '.join(where)}
+        ORDER BY RANDOM()
+        LIMIT :limit_rows
+        """
+    )
+
+    rows = conn.execute(query, params).mappings()
+    return [dict(row) for row in rows]
+
+
+def _build_country_targets(total: int) -> dict[str, int]:
+    country_count = len(COUNTRY_CODES)
+    base = total // country_count
+    remainder = total % country_count
+
+    targets: dict[str, int] = {}
+    for idx, code in enumerate(COUNTRY_CODES):
+        targets[code] = base + (1 if idx < remainder else 0)
+    return targets
+
+
+def _fetch_topup_rows(
+    *,
+    conn,
+    limit: int,
+    exclude_ids: set[int],
+) -> list[dict[str, Any]]:
+    if limit <= 0:
+        return []
+
+    where = [
+        "j.country_code IN ('US', 'CA', 'GB', 'AU', 'NZ', 'SG')",
+        "j.language_code IN ('en', 'fr')",
+        "COALESCE(BTRIM(j.title), '') <> ''",
+        "COALESCE(BTRIM(j.description), '') <> ''",
+    ]
+    params: dict[str, Any] = {
+        "limit_rows": limit,
+    }
+
+    if exclude_ids:
+        exclude_sql = ",".join(str(int(v)) for v in sorted(exclude_ids))
+        where.append(f"j.id NOT IN ({exclude_sql})")
+
+    query = text(
+        f"""
+        SELECT
+            j.id,
+            j.source_db,
+            j.country_code,
+            j.language_code,
+            c.name AS country_name,
+            j.city_title,
+            j.region_title,
+            j.site_id,
+            j.source_job_id,
+            j.url,
+            j.company_name,
+            j.title AS title,
+            j.description AS description
+        FROM jobs j
+        LEFT JOIN countries c ON c.code = j.country_code
+        WHERE {' AND '.join(where)}
+        ORDER BY RANDOM()
+        LIMIT :limit_rows
+        """
+    )
+    rows = conn.execute(query, params).mappings()
+    return [dict(row) for row in rows]
+
+
+def _split_at_targets(country_limit: int) -> tuple[int, int]:
+    with_at = int(round(country_limit * 0.95))
+    with_at = min(max(with_at, 0), country_limit)
+    without_at = country_limit - with_at
+    return with_at, without_at
+
+
+if __name__ == "__main__":
+    raise SystemExit(run())

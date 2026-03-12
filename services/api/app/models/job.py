@@ -43,6 +43,7 @@ class Job(Base):
     company_name: Mapped[str | None] = mapped_column(VARCHAR(255), nullable=True)
     site_title: Mapped[str | None] = mapped_column(VARCHAR(100), nullable=True)
     url: Mapped[str] = mapped_column(TEXT, nullable=False)
+    email: Mapped[str | None] = mapped_column(TEXT, nullable=True)
 
     # Location
     city_id: Mapped[int | None] = mapped_column(BIGINT, nullable=True)
@@ -68,8 +69,7 @@ class Job(Base):
     is_active: Mapped[bool] = mapped_column(BOOLEAN, nullable=False, default=True, server_default="true")
 
     # Local AI processing
-    title_normalized: Mapped[str | None] = mapped_column(TEXT, nullable=True)
+    title_clean: Mapped[str | None] = mapped_column(TEXT, nullable=True)
     description_clean: Mapped[str | None] = mapped_column(TEXT, nullable=True)
-    description_html: Mapped[str | None] = mapped_column(TEXT, nullable=True)
     embedding: Mapped[str | None] = mapped_column(TEXT, nullable=True)
     embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
