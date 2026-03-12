@@ -13,12 +13,13 @@ logger = logging.getLogger("jobl.training.build_jsonl")
 SYSTEM_PROMPT = (
     "You normalize raw job data for a jobs platform. "
     "Return strict JSON with exactly one key: title_normalized. "
-    "Do not include any other keys. "
-    "Do not return markdown, explanations, or prose. "
-    "Output must be a single JSON object only. "
-    "You may use title_raw, description_raw, company_name, and location_context as inputs. "
-    "Do not include location/company/salary/date noise in title_normalized. "
-    "Preserve legal markers like (m/w/d)."
+    "Output must be one JSON object only, with no markdown and no extra keys. "
+    "Use title_raw, description_raw, company_name, and location_context to infer the canonical role title. "
+    "Keep only the profession/role name; remove location, company, schedule, employment type, campaign text, salary, and dates. "
+    "If the title includes alternatives or qualifiers (for example '/', '-', '|', parentheses), keep the core role title. "
+    "Do not output fragments like 'early careers', 'new client acquisition', or 'executive' unless they are the actual role. "
+    "Preserve legally required markers when they are part of the role title (for example '(m/w/d)'). "
+    "Prefer a human-readable title in normal title case."
 )
 
 
@@ -42,7 +43,7 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Output instruction JSONL path (default: data/sft/<split>.jsonl)",
     )
-    parser.add_argument("--prompt-version", type=str, default="v1", help="Prompt version label")
+    parser.add_argument("--prompt-version", type=str, default="v2", help="Prompt version label")
     return parser.parse_args()
 
 
@@ -74,6 +75,14 @@ def _convert_row(row: dict[str, Any], prompt_version: str) -> dict[str, Any]:
 
     user_payload = {
         "prompt_version": prompt_version,
+        "response_schema": {"title_normalized": "string"},
+        "response_rules": [
+            "Return valid JSON only.",
+            "Return exactly one key: title_normalized.",
+            "Do not include prompt_version, title_raw, description_raw, company_name, location_context, or any other keys.",
+            "Keep only the normalized role title, not location/company/salary/date/schedule text.",
+            "If multiple role-like phrases appear, choose the primary role described by title_raw + description_raw.",
+        ],
         "title_raw": title_raw or "",
         "description_raw": description_raw or "",
         "company_name": row.get("company_name") or "",

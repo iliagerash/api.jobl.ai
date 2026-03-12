@@ -283,6 +283,9 @@ def _build_user_payload_for_inference(user_content: str) -> str:
         "Return valid JSON only.",
         "Return exactly one key: title_normalized.",
         "Do not include prompt_version, job_title, title_raw, description_raw, or any other keys.",
+        "Keep only the normalized role title, not location/company/salary/date/schedule text.",
+        "If multiple role-like phrases appear, choose the primary role described by title_raw + description_raw.",
+        "Do not return fragments like 'early careers' or 'new client acquisition' as title_normalized.",
     ]
     return json.dumps(payload, ensure_ascii=False)
 
