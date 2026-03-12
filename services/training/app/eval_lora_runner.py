@@ -16,6 +16,9 @@ logger = logging.getLogger("jobl.training.eval_lora")
 
 FIELD_RE = {
     "title_normalized": re.compile(r'"title_normalized"\s*:\s*"((?:\\.|[^"\\])*)"', re.DOTALL),
+    "job_title": re.compile(r'"job_title"\s*:\s*"((?:\\.|[^"\\])*)"', re.DOTALL),
+    "title": re.compile(r'"title"\s*:\s*"((?:\\.|[^"\\])*)"', re.DOTALL),
+    "title_clean": re.compile(r'"title_clean"\s*:\s*"((?:\\.|[^"\\])*)"', re.DOTALL),
 }
 
 
@@ -30,7 +33,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--adapter-dir", default="artifacts/lora-normalize-v1/adapter", help="LoRA adapter directory")
     parser.add_argument("--limit", type=int, default=0, help="Max rows to evaluate, 0 means all")
     parser.add_argument("--batch-size", type=int, default=8, help="Inference batch size")
-    parser.add_argument("--max-new-tokens", type=int, default=256, help="Generation max_new_tokens")
+    parser.add_argument("--max-new-tokens", type=int, default=128, help="Generation max_new_tokens")
     parser.add_argument("--temperature", type=float, default=0.0, help="Generation temperature")
     parser.add_argument("--progress-every", type=int, default=10, help="Log progress every N rows")
     parser.add_argument("--out-dir", default="artifacts/lora-normalize-v1/eval", help="Directory for evaluation artifacts")
@@ -262,7 +265,25 @@ def _build_inference_prompt(row: dict[str, Any]) -> str:
     messages = row.get("messages") or []
     system = _message_content(messages, 0)
     user = _message_content(messages, 1)
+    user = _build_user_payload_for_inference(user)
     return f"<|system|>\n{system}\n<|user|>\n{user}\n<|assistant|>\n"
+
+
+def _build_user_payload_for_inference(user_content: str) -> str:
+    try:
+        payload = json.loads(user_content)
+    except json.JSONDecodeError:
+        return user_content
+    if not isinstance(payload, dict):
+        return user_content
+
+    payload["response_schema"] = {"title_normalized": "string"}
+    payload["response_rules"] = [
+        "Return valid JSON only.",
+        "Return exactly one key: title_normalized.",
+        "Do not include prompt_version, job_title, title_raw, description_raw, or any other keys.",
+    ]
+    return json.dumps(payload, ensure_ascii=False)
 
 
 def _resolve_base_model_name(*, adapter_dir: Path, explicit_model: str | None) -> str:
@@ -363,11 +384,12 @@ def _parse_json_loose(content: str) -> dict[str, Any] | None:
     text = _strip_wrappers(text)
 
     for obj in _iter_json_objects(text):
-        if _looks_like_prediction_object(obj):
-            return obj
+        canonical = _canonicalize_prediction_obj(obj)
+        if _looks_like_prediction_object(canonical):
+            return canonical
 
     for obj in _iter_json_objects(text):
-        return obj
+        return _canonicalize_prediction_obj(obj)
 
     recovered = _recover_fields_with_regex(text)
     if recovered:
@@ -417,8 +439,22 @@ def _recover_fields_with_regex(text: str) -> dict[str, str] | None:
             decoded = raw
         recovered[key] = str(decoded).strip()
     if recovered:
-        return recovered
+        return _canonicalize_prediction_obj(recovered)
     return None
+
+
+def _canonicalize_prediction_obj(obj: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(obj, dict):
+        return {}
+    out = dict(obj)
+    if "title_normalized" in out:
+        return out
+    for alias in ("job_title", "title", "title_clean"):
+        value = str(out.get(alias) or "").strip()
+        if value:
+            out["title_normalized"] = value
+            break
+    return out
 
 
 def _normalize_text(value: str) -> str:

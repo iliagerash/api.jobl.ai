@@ -12,7 +12,10 @@ logger = logging.getLogger("jobl.training.build_jsonl")
 
 SYSTEM_PROMPT = (
     "You normalize raw job data for a jobs platform. "
-    "Return strict JSON with field title_normalized. "
+    "Return strict JSON with exactly one key: title_normalized. "
+    "Do not include any other keys. "
+    "Do not return markdown, explanations, or prose. "
+    "Output must be a single JSON object only. "
     "You may use title_raw, description_raw, company_name, and location_context as inputs. "
     "Do not include location/company/salary/date noise in title_normalized. "
     "Preserve legal markers like (m/w/d)."
