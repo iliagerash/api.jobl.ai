@@ -162,7 +162,7 @@ def _run_eval(args: argparse.Namespace) -> None:
             expected = _parse_assistant_target(row)
             pred_obj = _parse_json_loose(raw_prediction)
 
-            valid_json = isinstance(pred_obj, dict) and _looks_like_prediction_object(pred_obj)
+            valid_json = isinstance(pred_obj, dict) and _is_strict_prediction_object(pred_obj)
             if valid_json:
                 metrics["valid_json"] += 1
 
@@ -186,6 +186,7 @@ def _run_eval(args: argparse.Namespace) -> None:
                     {
                         "id": row.get("id"),
                         "language_code": row.get("language_code"),
+                        "title_original": _extract_original_title(row),
                         "expected_title_normalized": exp_title,
                         "predicted_title_normalized": pred_title,
                         "raw_prediction": raw_prediction,
@@ -377,6 +378,21 @@ def _parse_assistant_target(row: dict[str, Any]) -> dict[str, Any]:
     return _parse_json_loose(content) or {}
 
 
+def _extract_original_title(row: dict[str, Any]) -> str:
+    messages = row.get("messages") or []
+    user_content = _message_content(messages, 1)
+    try:
+        user_payload = json.loads(user_content)
+    except json.JSONDecodeError:
+        return ""
+    if not isinstance(user_payload, dict):
+        return ""
+    title = user_payload.get("title_raw")
+    if title is None:
+        title = user_payload.get("title")
+    return str(title or "").strip()
+
+
 def _parse_json_loose(content: str) -> dict[str, Any] | None:
     text = (content or "").strip()
     if not text:
@@ -411,6 +427,14 @@ def _iter_json_objects(text: str):
 
 def _looks_like_prediction_object(obj: dict[str, Any]) -> bool:
     return "title_normalized" in obj
+
+
+def _is_strict_prediction_object(obj: dict[str, Any]) -> bool:
+    if not isinstance(obj, dict):
+        return False
+    if set(obj.keys()) != {"title_normalized"}:
+        return False
+    return isinstance(obj.get("title_normalized"), str)
 
 
 def _strip_wrappers(text: str) -> str:
@@ -490,20 +514,21 @@ def _canonical_title(value: str) -> str:
 
 def _write_mismatches_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     fieldnames = [
-        "id",
-        "language_code",
-        "valid_json",
-        "title_exact",
-        "expected_title_normalized",
-        "predicted_title_normalized",
-        "raw_prediction",
-        "title_similarity",
+        "title_original",
+        "title_expected",
+        "title_generated",
     ]
     with path.open("w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         for row in rows:
-            writer.writerow({k: row.get(k) for k in fieldnames})
+            writer.writerow(
+                {
+                    "title_original": row.get("title_original") or "",
+                    "title_expected": row.get("expected_title_normalized") or "",
+                    "title_generated": row.get("predicted_title_normalized") or "",
+                }
+            )
 
 
 def _format_seconds(total_seconds: int) -> str:
