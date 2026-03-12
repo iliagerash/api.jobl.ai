@@ -45,6 +45,7 @@ def run() -> int:
 def _fetch_rows(engine, batch_tag: str | None, limit: int | None) -> list[dict[str, Any]]:
     where = [
         "COALESCE(BTRIM(ns.title), '') <> ''",
+        "COALESCE(BTRIM(ns.description), '') <> ''",
         "COALESCE(BTRIM(ns.expected_title_normalized), '') <> ''",
         "ns.language_code IN ('en', 'es', 'de', 'fr', 'pt', 'it', 'gr', 'uk', 'nl', 'da')",
     ]
@@ -67,7 +68,9 @@ def _fetch_rows(engine, batch_tag: str | None, limit: int | None) -> list[dict[s
             ns.country_name,
             ns.region_title,
             ns.city_title,
-            ns.title AS title_raw,
+            ns.company_name,
+            ns.title,
+            ns.description,
             ns.expected_title_normalized
         FROM normalization_samples ns
         WHERE {' AND '.join(where)}
