@@ -16,6 +16,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Test inference API using titles from jobs table")
     parser.add_argument("--limit", type=int, default=10, help="Number of titles to test")
     parser.add_argument("--random", action="store_true", help="Select random titles instead of latest by id")
+    parser.add_argument("--lang", default=None, help="Filter by jobs.language_code (for example: en, de)")
     return parser.parse_args()
 
 
@@ -27,7 +28,7 @@ def run() -> int:
     )
 
     limit = max(1, int(args.limit))
-    rows = _fetch_titles(limit=limit, randomize=bool(args.random))
+    rows = _fetch_titles(limit=limit, randomize=bool(args.random), language_code=args.lang)
     if not rows:
         logger.warning("no titles found limit=%s", limit)
         return 0
@@ -41,14 +42,22 @@ def run() -> int:
     return 0
 
 
-def _fetch_titles(limit: int, randomize: bool) -> list[str]:
+def _fetch_titles(limit: int, randomize: bool, language_code: str | None) -> list[str]:
     engine = create_engine(settings.target_database_url, pool_pre_ping=True)
     order_clause = "RANDOM()" if randomize else "j.id DESC"
+    where_lang = ""
+    params: dict[str, object] = {"limit": limit}
+    if language_code:
+        where_lang = " AND j.language_code = :language_code"
+        params["language_code"] = str(language_code).strip().lower()
     sql = text(
         """
         SELECT j.title
         FROM jobs j
         WHERE COALESCE(BTRIM(j.title), '') <> ''
+        """
+        + where_lang
+        + """
         ORDER BY """
         + order_clause
         + """
@@ -56,7 +65,7 @@ def _fetch_titles(limit: int, randomize: bool) -> list[str]:
         """
     )
     with engine.connect() as conn:
-        result = conn.execute(sql, {"limit": limit})
+        result = conn.execute(sql, params)
         return [str(row[0]) for row in result if row[0] is not None]
 
 
