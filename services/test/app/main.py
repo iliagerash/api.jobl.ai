@@ -15,6 +15,7 @@ logger = logging.getLogger("jobl.test.inference")
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Test inference API using titles from jobs table")
     parser.add_argument("--limit", type=int, default=10, help="Number of titles to test")
+    parser.add_argument("--random", action="store_true", help="Select random titles instead of latest by id")
     return parser.parse_args()
 
 
@@ -26,7 +27,7 @@ def run() -> int:
     )
 
     limit = max(1, int(args.limit))
-    rows = _fetch_titles(limit=limit)
+    rows = _fetch_titles(limit=limit, randomize=bool(args.random))
     if not rows:
         logger.warning("no titles found limit=%s", limit)
         return 0
@@ -40,14 +41,17 @@ def run() -> int:
     return 0
 
 
-def _fetch_titles(limit: int) -> list[str]:
+def _fetch_titles(limit: int, randomize: bool) -> list[str]:
     engine = create_engine(settings.target_database_url, pool_pre_ping=True)
+    order_clause = "RANDOM()" if randomize else "j.id DESC"
     sql = text(
         """
         SELECT j.title
         FROM jobs j
         WHERE COALESCE(BTRIM(j.title), '') <> ''
-        ORDER BY j.id DESC
+        ORDER BY """
+        + order_clause
+        + """
         LIMIT :limit
         """
     )
