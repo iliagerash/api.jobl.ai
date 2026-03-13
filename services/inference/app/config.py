@@ -3,6 +3,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
     model_dir: str
+    workers: int = 1
     num_beams: int = 4
     max_new_tokens: int = 32
     max_input_length: int = 128

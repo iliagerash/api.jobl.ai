@@ -1,3 +1,4 @@
+import argparse
 import logging
 import time
 from contextlib import asynccontextmanager
@@ -100,8 +101,24 @@ def normalize_batch(request_body: NormalizeBatchRequest, request: Request) -> No
 
 
 def run() -> None:
+    parser = argparse.ArgumentParser(description="Run Jobl inference API")
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=settings.workers,
+        help="Number of uvicorn worker processes (default: WORKERS or 1)",
+    )
+    args = parser.parse_args()
+    workers = max(1, int(args.workers))
+
     logging.basicConfig(
         level=getattr(logging, settings.log_level.upper(), logging.INFO),
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
-    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, log_level=settings.log_level.lower())
+    uvicorn.run(
+        "app.main:app",
+        host="0.0.0.0",
+        port=8000,
+        log_level=settings.log_level.lower(),
+        workers=workers,
+    )
