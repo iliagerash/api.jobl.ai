@@ -30,26 +30,30 @@ def run() -> int:
         format="%(asctime)s %(levelname)s %(name)s %(message)s",
     )
 
-    limit = max(1, int(args.limit))
-    rows = _fetch_titles(
-        limit=limit,
-        randomize=bool(args.random),
-        language_code=args.lang,
-        country_code=args.country,
-    )
-    if not rows:
-        logger.warning("no titles found limit=%s", limit)
-        return 0
+    try:
+        limit = max(1, int(args.limit))
+        rows = _fetch_titles(
+            limit=limit,
+            randomize=bool(args.random),
+            language_code=args.lang,
+            country_code=args.country,
+        )
+        if not rows:
+            logger.warning("no titles found limit=%s", limit)
+            return 0
 
-    logger.info("testing inference rows=%s base_url=%s", len(rows), settings.inference_api_base_url)
-    for row in rows:
-        title = row["title"]
-        language_code = None if args.no_lang else row.get("language_code")
-        normalized = _normalize_title(title, language_code, omit_language=bool(args.no_lang))
-        safe_original = str(title or "").replace("\n", " ").strip()
-        safe_normalized = str(normalized or "").replace("\n", " ").strip()
-        sys.stdout.write(f"{safe_original} ||| {safe_normalized}\n")
-    return 0
+        logger.info("testing inference rows=%s base_url=%s", len(rows), settings.inference_api_base_url)
+        for row in rows:
+            title = row["title"]
+            language_code = None if args.no_lang else row.get("language_code")
+            normalized = _normalize_title(title, language_code, omit_language=bool(args.no_lang))
+            safe_original = str(title or "").replace("\n", " ").strip()
+            safe_normalized = str(normalized or "").replace("\n", " ").strip()
+            sys.stdout.write(f"{safe_original} ||| {safe_normalized}\n")
+        return 0
+    except KeyboardInterrupt:
+        logger.warning("interrupted by user (Ctrl+C), exiting gracefully")
+        return 130
 
 
 def _fetch_titles(
