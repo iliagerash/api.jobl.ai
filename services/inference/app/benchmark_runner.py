@@ -40,7 +40,7 @@ def run() -> int:
 def _run(args: argparse.Namespace) -> None:
     try:
         import torch
-        from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+        from transformers import AutoConfig, AutoModelForSeq2SeqLM, AutoTokenizer
     except ImportError as exc:
         raise SystemExit("Dependencies missing. Install with: pip install -e .") from exc
 
@@ -73,8 +73,11 @@ def _run(args: argparse.Namespace) -> None:
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    model_config = AutoConfig.from_pretrained(model_dir)
+    model_config.tie_word_embeddings = False
     model = AutoModelForSeq2SeqLM.from_pretrained(
         model_dir,
+        config=model_config,
         dtype=dtype,
         device_map="auto" if has_cuda else None,
         low_cpu_mem_usage=True,

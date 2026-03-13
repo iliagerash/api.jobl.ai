@@ -3,7 +3,7 @@ import logging
 import re
 
 import torch
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+from transformers import AutoConfig, AutoModelForSeq2SeqLM, AutoTokenizer
 
 from app.config import Settings
 
@@ -82,8 +82,11 @@ class JobTitleNormalizer:
         self._ready = False
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(settings.model_dir, use_fast=True)
+            model_config = AutoConfig.from_pretrained(settings.model_dir)
+            model_config.tie_word_embeddings = False
             self.model = AutoModelForSeq2SeqLM.from_pretrained(
                 settings.model_dir,
+                config=model_config,
                 dtype=torch.float32,
                 low_cpu_mem_usage=True,
             )
