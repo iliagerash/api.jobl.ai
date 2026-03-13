@@ -26,7 +26,7 @@ PRE_STRIP_PATTERNS = [
     (
         "employment_type",
         re.compile(
-            r"full[\s-]?time|part[\s-]?time|casual|temp(orary)?|locum|fixed[\s-]?term|permanent|perm(?!\w)|on[\s-]?call|sur appel",
+            r"full[\s-]?time|part[\s-]?time|casual|\btemporary\b|\btemp(?!\w)\b|fixed[\s-]?term|\bpermanent(?!\s+reliever)\b|perm(?!\w)|on[\s-]?call|sur appel",
             re.IGNORECASE,
         ),
     ),
