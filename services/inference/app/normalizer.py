@@ -73,6 +73,7 @@ def _fix_casing(title: str) -> str:
 def _normalize_separators(title: str) -> str:
     """Ensure consistent spacing around dash separators."""
     title = re.sub(r"\s*[-–—]\s*", " - ", title)
+    title = re.sub(r"\b(non)\s+-\s+([A-Za-z0-9]+)\b", r"\1-\2", title, flags=re.IGNORECASE)
     return re.sub(r"\s+", " ", title).strip()
 
 
