@@ -139,17 +139,14 @@ class JobTitleNormalizer:
             decoded = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
         normalized = [_normalize_separators(_fix_casing(title)) for title in decoded]
         for idx, value in zip(model_indices, normalized):
-            results[idx] = value
+            results[idx] = _restore_legal_suffix_marker(titles[idx], value)
         return results
 
 
 def _normalize_rules_only(title: str) -> str:
     original = str(title or "")
     normalized = _normalize_separators(pre_strip(original))
-    marker = _extract_legal_suffix_marker(original)
-    if marker and not _extract_legal_suffix_marker(normalized):
-        normalized = f"{normalized} {marker}".strip()
-    return normalized
+    return _restore_legal_suffix_marker(original, normalized)
 
 
 def _should_use_model(language_code: str | None) -> bool:
@@ -172,3 +169,10 @@ def _extract_legal_suffix_marker(title: str) -> str | None:
     if match_fr:
         return f"{match_fr.group(1)}/{match_fr.group(2)}"
     return None
+
+
+def _restore_legal_suffix_marker(original: str, normalized: str) -> str:
+    marker = _extract_legal_suffix_marker(original)
+    if marker and not _extract_legal_suffix_marker(normalized):
+        return f"{normalized} {marker}".strip()
+    return normalized
