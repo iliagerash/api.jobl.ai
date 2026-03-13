@@ -144,7 +144,12 @@ class JobTitleNormalizer:
 
 
 def _normalize_rules_only(title: str) -> str:
-    return _normalize_separators(pre_strip(title))
+    original = str(title or "")
+    normalized = _normalize_separators(pre_strip(original))
+    marker = _extract_legal_suffix_marker(original)
+    if marker and not _extract_legal_suffix_marker(normalized):
+        normalized = f"{normalized} {marker}".strip()
+    return normalized
 
 
 def _should_use_model(language_code: str | None) -> bool:
@@ -152,3 +157,18 @@ def _should_use_model(language_code: str | None) -> bool:
     if not code:
         return True
     return code.startswith("en")
+
+
+def _extract_legal_suffix_marker(title: str) -> str | None:
+    text = str(title or "")
+    marker_letter = r"[mMwWfFdDhHxXiI]"
+    match_de = re.search(
+        rf"\b({marker_letter})\s*[/\-]\s*({marker_letter})\s*[/\-]\s*({marker_letter})\b",
+        text,
+    )
+    if match_de:
+        return f"{match_de.group(1)}/{match_de.group(2)}/{match_de.group(3)}"
+    match_fr = re.search(rf"\b({marker_letter})\s*[/\-]\s*({marker_letter})\b", text)
+    if match_fr:
+        return f"{match_fr.group(1)}/{match_fr.group(2)}"
+    return None
