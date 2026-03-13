@@ -145,7 +145,7 @@ class JobTitleNormalizer:
 
 def _normalize_rules_only(title: str) -> str:
     original = str(title or "")
-    normalized = _normalize_separators(pre_strip(original))
+    normalized = re.sub(r"\s+", " ", pre_strip(original)).strip()
     return _restore_legal_suffix_marker(original, normalized)
 
 
