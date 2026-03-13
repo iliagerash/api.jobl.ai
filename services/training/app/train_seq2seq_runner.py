@@ -136,15 +136,21 @@ def _train(args: argparse.Namespace) -> None:
 
     training_args = Seq2SeqTrainingArguments(**training_kwargs)
 
-    trainer = Seq2SeqTrainer(
-        model=model,
-        args=training_args,
-        train_dataset=train_ds,
-        eval_dataset=val_ds,
-        tokenizer=tokenizer,
-        data_collator=data_collator,
-        callbacks=[EarlyStoppingCallback(early_stopping_patience=2)],
-    )
+    trainer_kwargs = {
+        "model": model,
+        "args": training_args,
+        "train_dataset": train_ds,
+        "eval_dataset": val_ds,
+        "data_collator": data_collator,
+        "callbacks": [EarlyStoppingCallback(early_stopping_patience=2)],
+    }
+    trainer_params = inspect.signature(Seq2SeqTrainer.__init__).parameters
+    if "tokenizer" in trainer_params:
+        trainer_kwargs["tokenizer"] = tokenizer
+    elif "processing_class" in trainer_params:
+        trainer_kwargs["processing_class"] = tokenizer
+
+    trainer = Seq2SeqTrainer(**trainer_kwargs)
 
     logger.info(
         "training started model=%s train_rows=%s val_rows=%s out=%s batch_size=%s epochs=%s lr=%s memory_safe=%s",
