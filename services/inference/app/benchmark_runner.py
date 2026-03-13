@@ -75,7 +75,7 @@ def _run(args: argparse.Namespace) -> None:
 
     model = AutoModelForSeq2SeqLM.from_pretrained(
         model_dir,
-        torch_dtype=dtype,
+        dtype=dtype,
         device_map="auto" if has_cuda else None,
         low_cpu_mem_usage=True,
     )

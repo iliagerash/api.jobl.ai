@@ -84,7 +84,7 @@ class JobTitleNormalizer:
             self.tokenizer = AutoTokenizer.from_pretrained(settings.model_dir, use_fast=True)
             self.model = AutoModelForSeq2SeqLM.from_pretrained(
                 settings.model_dir,
-                torch_dtype=torch.float32,
+                dtype=torch.float32,
                 low_cpu_mem_usage=True,
             )
             self.model.eval()
