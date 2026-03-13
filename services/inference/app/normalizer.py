@@ -6,6 +6,7 @@ import torch
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
 from app.config import Settings
+from app.language import detect_language_code
 
 
 logger = logging.getLogger("jobl.inference.normalizer")
@@ -111,9 +112,16 @@ class JobTitleNormalizer:
         if len(language_codes) != len(titles):
             raise ValueError("language_codes length must match titles length")
 
+        resolved_language_codes: list[str | None] = []
+        for title, code in zip(titles, language_codes):
+            normalized_code = str(code or "").strip().lower() or None
+            if normalized_code is None:
+                normalized_code = detect_language_code(title)
+            resolved_language_codes.append(normalized_code)
+
         results: list[str] = [""] * len(titles)
-        model_indices = [idx for idx, code in enumerate(language_codes) if _should_use_model(code)]
-        for idx, code in enumerate(language_codes):
+        model_indices = [idx for idx, code in enumerate(resolved_language_codes) if _should_use_model(code)]
+        for idx, code in enumerate(resolved_language_codes):
             if not _should_use_model(code):
                 results[idx] = _normalize_rules_only(titles[idx])
 
