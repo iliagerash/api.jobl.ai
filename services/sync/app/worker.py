@@ -409,7 +409,7 @@ class SyncWorker:
             WHERE j.id > :last_job_id
               AND NOT EXISTS (
                 SELECT 1
-                FROM export e
+                FROM export_ai e
                 WHERE e.job_id = j.id
                   AND e.destination = :destination
             )
@@ -625,7 +625,7 @@ class SyncWorker:
             return
         query = text(
             """
-            INSERT INTO export (job_id, destination, site_id)
+            INSERT INTO export_ai (job_id, destination, site_id)
             VALUES (:job_id, :destination, :site_id)
             ON DUPLICATE KEY UPDATE
                 site_id = VALUES(site_id),
