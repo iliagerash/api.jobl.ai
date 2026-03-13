@@ -12,6 +12,7 @@ dependencies = [
 
 [project.scripts]
 jobl-test-inference = "app.main:run"
+jobl-test-inference-stress = "app.stress_runner:run"
 
 [build-system]
 requires = ["setuptools>=68.0"]
