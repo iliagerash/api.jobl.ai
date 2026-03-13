@@ -34,15 +34,16 @@ def run() -> int:
         return 0
 
     logger.info("testing inference rows=%s base_url=%s", len(rows), settings.inference_api_base_url)
-    for title in rows:
-        normalized = _normalize_title(title)
+    for row in rows:
+        title = row["title"]
+        normalized = _normalize_title(title, row.get("language_code"))
         safe_original = str(title or "").replace("\n", " ").strip()
         safe_normalized = str(normalized or "").replace("\n", " ").strip()
         sys.stdout.write(f"{safe_original} ||| {safe_normalized}\n")
     return 0
 
 
-def _fetch_titles(limit: int, randomize: bool, language_code: str | None) -> list[str]:
+def _fetch_titles(limit: int, randomize: bool, language_code: str | None) -> list[dict[str, str | None]]:
     engine = create_engine(settings.target_database_url, pool_pre_ping=True)
     order_clause = "RANDOM()" if randomize else "j.id DESC"
     where_lang = ""
@@ -52,7 +53,7 @@ def _fetch_titles(limit: int, randomize: bool, language_code: str | None) -> lis
         params["language_code"] = str(language_code).strip().lower()
     sql = text(
         """
-        SELECT j.title
+        SELECT j.title, j.language_code
         FROM jobs j
         WHERE COALESCE(BTRIM(j.title), '') <> ''
         """
@@ -66,13 +67,28 @@ def _fetch_titles(limit: int, randomize: bool, language_code: str | None) -> lis
     )
     with engine.connect() as conn:
         result = conn.execute(sql, params)
-        return [str(row[0]) for row in result if row[0] is not None]
+        rows: list[dict[str, str | None]] = []
+        for row in result:
+            if row[0] is None:
+                continue
+            rows.append(
+                {
+                    "title": str(row[0]),
+                    "language_code": str(row[1]).strip().lower() if row[1] is not None else None,
+                }
+            )
+        return rows
 
 
-def _normalize_title(title_raw: str) -> str:
+def _normalize_title(title_raw: str, language_code: str | None) -> str:
     base = settings.inference_api_base_url.rstrip("/")
     url = f"{base}/normalize"
-    payload = json.dumps({"title_raw": str(title_raw or "")}).encode("utf-8")
+    payload = json.dumps(
+        {
+            "title_raw": str(title_raw or ""),
+            "language_code": str(language_code or "").strip().lower() or None,
+        }
+    ).encode("utf-8")
     req = request.Request(
         url=url,
         data=payload,

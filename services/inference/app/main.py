@@ -67,13 +67,14 @@ def ready(request: Request) -> JSONResponse:
 def normalize(request_body: NormalizeRequest, request: Request) -> NormalizeResponse:
     started = time.perf_counter()
     normalizer: JobTitleNormalizer = request.app.state.normalizer
-    title_normalized = normalizer.normalize(request_body.title_raw)
+    title_normalized = normalizer.normalize(request_body.title_raw, request_body.language_code)
     if not title_normalized.strip():
         title_normalized = pre_strip(request_body.title_raw) or request_body.title_raw.strip()
     latency_ms = (time.perf_counter() - started) * 1000
     logger.debug(
-        "normalize request title_raw=%r title_normalized=%r latency_ms=%.2f",
+        "normalize request title_raw=%r language_code=%r title_normalized=%r latency_ms=%.2f",
         request_body.title_raw,
+        request_body.language_code,
         title_normalized,
         latency_ms,
     )
@@ -85,7 +86,8 @@ def normalize_batch(request_body: NormalizeBatchRequest, request: Request) -> No
     started = time.perf_counter()
     normalizer: JobTitleNormalizer = request.app.state.normalizer
     titles = [item.title_raw for item in request_body.items]
-    normalized_titles = normalizer.normalize_batch(titles)
+    language_codes = [item.language_code for item in request_body.items]
+    normalized_titles = normalizer.normalize_batch(titles, language_codes)
     results = []
     for raw_title, normalized_title in zip(titles, normalized_titles):
         resolved_title = normalized_title

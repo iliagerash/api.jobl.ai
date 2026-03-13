@@ -5,6 +5,7 @@ from app.config import settings
 
 class NormalizeRequest(BaseModel):
     title_raw: str = Field(min_length=1, max_length=512)
+    language_code: str | None = Field(default=None, min_length=2, max_length=16)
 
     model_config = ConfigDict(str_strip_whitespace=True)
 

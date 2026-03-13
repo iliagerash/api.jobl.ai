@@ -102,11 +102,25 @@ class JobTitleNormalizer:
     def is_ready(self) -> bool:
         return self._ready
 
-    def normalize(self, title_raw: str) -> str:
-        return self.normalize_batch([title_raw])[0]
+    def normalize(self, title_raw: str, language_code: str | None = None) -> str:
+        return self.normalize_batch([title_raw], [language_code])[0]
 
-    def normalize_batch(self, titles: list[str]) -> list[str]:
-        prompts = [f"normalize job title: {pre_strip(title)}" for title in titles]
+    def normalize_batch(self, titles: list[str], language_codes: list[str | None] | None = None) -> list[str]:
+        if language_codes is None:
+            language_codes = [None] * len(titles)
+        if len(language_codes) != len(titles):
+            raise ValueError("language_codes length must match titles length")
+
+        results: list[str] = [""] * len(titles)
+        model_indices = [idx for idx, code in enumerate(language_codes) if _should_use_model(code)]
+        for idx, code in enumerate(language_codes):
+            if not _should_use_model(code):
+                results[idx] = _normalize_rules_only(titles[idx])
+
+        if not model_indices:
+            return results
+
+        prompts = [f"normalize job title: {pre_strip(titles[idx])}" for idx in model_indices]
         self.tokenizer.padding_side = "right"
         inputs = self.tokenizer(
             prompts,
@@ -123,4 +137,18 @@ class JobTitleNormalizer:
                 early_stopping=True,
             )
             decoded = self.tokenizer.batch_decode(outputs, skip_special_tokens=True)
-        return [_normalize_separators(_fix_casing(title)) for title in decoded]
+        normalized = [_normalize_separators(_fix_casing(title)) for title in decoded]
+        for idx, value in zip(model_indices, normalized):
+            results[idx] = value
+        return results
+
+
+def _normalize_rules_only(title: str) -> str:
+    return _normalize_separators(pre_strip(title))
+
+
+def _should_use_model(language_code: str | None) -> bool:
+    code = str(language_code or "").strip().lower()
+    if not code:
+        return True
+    return code.startswith("en")
