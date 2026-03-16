@@ -1,66 +1,34 @@
-# OS files
-.DS_Store
-Thumbs.db
-
-# Editor/IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-*~
-
-# Logs
-logs/
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-
-# Environment files
+# Environment
 .env
-.env.*
-!.env.example
-
-# Dependency directories
-node_modules/
-
-# Build and coverage output
-dist/
-build/
-coverage/
-.cache/
-.turbo/
-.next/
-out/
-htmlcov/
-site/
+.env.local
 
 # Python
 __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
-.python-version
-.mypy_cache/
-.pytest_cache/
-.ruff_cache/
-.hypothesis/
-.tox/
-.nox/
+*.egg-info/
+dist/
+build/
 .venv/
 venv/
-ENV/
-env/
-pip-wheel-metadata/
-*.egg-info/
 
-# Package manager stores
-.pnpm-store/
-.yarn/cache/
-.yarn/unplugged/
-.yarn/build-state.yml
-.yarn/install-state.gz
+# ML models
+models/
+*.pkl
+*.pt
+*.bin
+*.safetensors
 
-# TypeScript
-*.tsbuildinfo
+# Training data
+data/
+
+# Logs
+*.log
+
+# macOS
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
