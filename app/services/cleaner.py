@@ -19,13 +19,15 @@ Transformations applied
     — but NOT when one text is a substring of the other (parent+child headers)
 8.  Promote fully standalone <strong>/<b> to <h3>  (section headers)
 9.  Collapse <br>-delimited runs into proper <p> blocks
-10. Promote <strong>/<b> at the START of a <p> to <h3> + <p>
+10. Split <p> blocks containing blank lines (\\n\\n) into sibling <p> elements
+11. Promote <strong>/<b> at the START of a <p> to <h3> + <p>
     — skipped for short inline label:value pairs  ("Posting ID: 5064")
-11. Fix invalid <h3> nested inside <p>  (hoist h3 out, split content)
-12. Unwrap double-nested <p><p>  (lxml re-parse artefact)
-13. Wrap bare text nodes in <p>
-14. Drop empty block tags
-15. Enforce allowed tag set: p h2 h3 h4 ul ol li strong em a
+12. Fix invalid <h3> nested inside <p>  (hoist h3 out, split content)
+13. Unwrap double-nested <p><p>  (lxml re-parse artefact)
+14. Wrap bare text nodes in <p>
+15. Normalize whitespace within <p>/<li> text nodes  (collapse \\n and spaces)
+16. Drop empty block tags
+17. Enforce allowed tag set: p h2 h3 h4 ul ol li strong em a
 
 Expiry extraction
 -----------------
@@ -462,6 +464,49 @@ def _collapse_brs(body: Tag, soup: BeautifulSoup) -> None:
             _split_p_on_brs(p, soup)
 
 
+def _split_p_on_blank_lines(body: Tag, soup: BeautifulSoup) -> None:
+    """Split <p> elements that contain blank lines (\\n\\n) into sibling <p> elements.
+
+    Handles sources that use literal newlines instead of <br> tags to separate
+    paragraphs — after unwrapping <div>/<table> layout tags these end up as a
+    single large <p> with internal \\n\\n sequences.
+    """
+    for p in list(body.find_all("p")):
+        serialized = "".join(str(c) for c in p.children)
+        segments = re.split(r"\n[ \t]*\n", serialized)
+        if len(segments) <= 1:
+            continue
+        new_paras: list[Tag] = []
+        for seg in segments:
+            inner = seg.strip()
+            if inner:
+                frag = BeautifulSoup(f"<p>{inner}</p>", "lxml").find("p")
+                if frag:
+                    new_paras.append(frag)
+        if not new_paras:
+            p.decompose()
+        elif len(new_paras) == 1:
+            p.replace_with(new_paras[0])
+        else:
+            p.replace_with(new_paras[0])
+            for i, np_ in enumerate(new_paras[1:], 1):
+                new_paras[i - 1].insert_after(np_)
+
+
+def _normalize_inline_whitespace(body: Tag) -> None:
+    """Collapse whitespace within text nodes inside <p> and <li> elements.
+
+    Removes leading/trailing whitespace and collapses internal \\n and
+    multiple spaces to a single space in each text node.
+    """
+    for tag in body.find_all(["p", "li"]):
+        for child in list(tag.children):
+            if isinstance(child, NavigableString):
+                normalized = re.sub(r"\s+", " ", str(child)).strip()
+                if normalized != str(child):
+                    child.replace_with(NavigableString(normalized))
+
+
 def _promote_leading_bold_in_p(soup: BeautifulSoup, body: Tag) -> None:
     for p in list(body.find_all("p")):
         children = [
@@ -599,10 +644,12 @@ def _build_clean_html(raw_html: str) -> str:
     _merge_consecutive_bold(body)
     _promote_standalone_bold(soup, body)
     _collapse_brs(body, soup)
+    _split_p_on_blank_lines(body, soup)
     _promote_leading_bold_in_p(soup, body)
     _fix_h3_in_p(body)
     _fix_nested_p(body)
     _wrap_naked_text(soup, body)
+    _normalize_inline_whitespace(body)
     _remove_ui_artifacts(body)
     _drop_empty_blocks(body)
     _enforce_allowed_tags(body)
