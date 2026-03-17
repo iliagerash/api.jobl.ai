@@ -82,12 +82,12 @@ api.jobl.ai/
 │   └── versions/                # 18 migrations (linear chain)
 ├── scripts/
 │   ├── generate_training_data.py  # Bootstrap categorizer training CSV from DB
-│   ├── seed_category_map.py       # Seed category_map table from CSV
 │   └── train_categorizer.py       # Train LightGBM, save .pkl artifact
 ├── sql/
 │   ├── seed_categories.sql      # 26 category rows
 │   ├── seed_countries.sql
-│   └── seed_source_countries.sql
+│   ├── seed_source_countries.sql
+│   └── category_map.csv         # source category → local category_id (1,315 rows)
 ├── deploy/
 │   ├── jobl-api.service         # systemd unit
 │   └── nginx/api.jobl.ai        # nginx site config
@@ -278,6 +278,7 @@ alembic upgrade head
 psql $DATABASE_URL < sql/seed_categories.sql
 psql $DATABASE_URL < sql/seed_countries.sql
 psql $DATABASE_URL < sql/seed_source_countries.sql
+psql $DATABASE_URL -c "\copy category_map (original_category, category_id) FROM 'sql/category_map.csv' CSV HEADER"
 ```
 
 ### Dependency scopes
@@ -408,9 +409,8 @@ python scripts/generate_training_data.py \
 
 `DATABASE_URL` is read from `.env` automatically.
 
-Outputs:
+Output:
 - `data/categorizer_training.csv` — columns: `title`, `original_category`, `description_plaintext`, `category_id`
-- `data/categories.csv` — 26 categories
 
 The script prints a summary of how many rows came from `category_map` vs. keyword heuristics:
 ```
@@ -424,7 +424,6 @@ Wrote 87432 training rows to data/categorizer_training.csv
 ```bash
 python scripts/train_categorizer.py \
   --data data/categorizer_training.csv \
-  --categories data/categories.csv \
   --output models/categorizer.pkl
 ```
 
@@ -535,9 +534,7 @@ $EDITOR .env   # set DATABASE_URL, model paths, etc.
 psql $DATABASE_URL < sql/seed_categories.sql
 psql $DATABASE_URL < sql/seed_countries.sql
 psql $DATABASE_URL < sql/seed_source_countries.sql
-
-# Seed category mappings
-python scripts/seed_category_map.py --input data/category_map.csv
+psql $DATABASE_URL -c "\copy category_map (original_category, category_id) FROM 'sql/category_map.csv' CSV HEADER"
 ```
 
 ### 3. Configure systemd

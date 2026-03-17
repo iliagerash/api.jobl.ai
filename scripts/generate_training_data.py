@@ -9,7 +9,7 @@ Usage:
     python scripts/generate_training_data.py --output data/
 
 Outputs:
-    data/categories.csv           — id,title for all 26 categories
+    sql/categories.csv            — id,title for all 26 categories (committed seed file, not regenerated)
     data/categorizer_training.csv — title,original_category,description_plaintext,category_id
 """
 
@@ -171,15 +171,7 @@ def main() -> None:
     country_list = [c.strip().upper() for c in args.countries.split(",")] if args.countries else []
 
     os.makedirs(args.output, exist_ok=True)
-    categories_path = os.path.join(args.output, "categories.csv")
     training_path = os.path.join(args.output, "categorizer_training.csv")
-
-    # Write categories CSV
-    with open(categories_path, "w", newline="", encoding="utf-8") as f:
-        writer = csv.writer(f)
-        writer.writerow(["id", "title"])
-        writer.writerows(CATEGORIES)
-    print(f"Wrote {len(CATEGORIES)} categories to {categories_path}")
 
     # Build country filter
     country_filter = ""
