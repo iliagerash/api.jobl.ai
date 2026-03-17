@@ -19,6 +19,7 @@ dependencies = [
   "python-dateutil>=2.9.0",
   "lightgbm>=4.3.0",
   "scikit-learn>=1.5.0",
+  "optimum[exporters,onnxruntime]>=1.21.0",
 ]
 
 [project.optional-dependencies]

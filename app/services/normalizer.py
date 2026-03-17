@@ -1,9 +1,16 @@
+import contextlib
 import html
 import logging
 import re
 
 import torch
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+
+try:
+    from optimum.onnxruntime import ORTModelForSeq2SeqLM
+    _ORT_AVAILABLE = True
+except ImportError:
+    _ORT_AVAILABLE = False
 
 from app.core.config import Settings
 from app.services.language import detect_language_code
@@ -84,12 +91,18 @@ class JobTitleNormalizer:
         self._ready = False
         try:
             self.tokenizer = AutoTokenizer.from_pretrained(settings.model_dir, use_fast=True)
-            self.model = AutoModelForSeq2SeqLM.from_pretrained(
-                settings.model_dir,
-                dtype=torch.float32,
-                low_cpu_mem_usage=True,
-            )
-            self.model.eval()
+            if _ORT_AVAILABLE:
+                self.model = ORTModelForSeq2SeqLM.from_pretrained(settings.model_dir)
+                logger.info("using ONNX Runtime for inference")
+            else:
+                self.model = AutoModelForSeq2SeqLM.from_pretrained(
+                    settings.model_dir,
+                    dtype=torch.float32,
+                    low_cpu_mem_usage=True,
+                )
+                self.model.eval()
+            self._cache: dict[tuple, str] = {}
+            self._cache_max = 50_000
             self._ready = True
             logger.info(
                 "model loaded model_dir=%s num_beams=%s",
@@ -104,7 +117,13 @@ class JobTitleNormalizer:
         return self._ready
 
     def normalize(self, title_raw: str, language_code: str | None = None) -> str:
-        return self.normalize_batch([title_raw], [language_code])[0]
+        cache_key = (title_raw, language_code)
+        if cache_key in self._cache:
+            return self._cache[cache_key]
+        result = self.normalize_batch([title_raw], [language_code])[0]
+        if len(self._cache) < self._cache_max:
+            self._cache[cache_key] = result
+        return result
 
     def normalize_batch(self, titles: list[str], language_codes: list[str | None] | None = None) -> list[str]:
         if language_codes is None:
@@ -139,7 +158,7 @@ class JobTitleNormalizer:
             max_length=self.settings.max_input_length,
             return_tensors="pt",
         )
-        with torch.no_grad():
+        with torch.no_grad() if not _ORT_AVAILABLE else contextlib.nullcontext():
             outputs = self.model.generate(
                 **inputs,
                 num_beams=self.settings.num_beams,
