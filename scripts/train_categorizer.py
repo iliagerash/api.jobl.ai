@@ -78,11 +78,11 @@ def main() -> None:
     y = df["category_id"].astype(int).tolist()
 
     print("Vectorizing text (TF-IDF) ...", flush=True)
-    tfidf = TfidfVectorizer(max_features=20_000, ngram_range=(1, 2), sublinear_tf=True)
+    tfidf = TfidfVectorizer(max_features=20_000, ngram_range=(1, 2), min_df=5, sublinear_tf=True)
     X_vec = tfidf.fit_transform(X)
     print(f"  Done — matrix shape: {X_vec.shape}", flush=True)
 
-    print("Training LightGBM classifier ...", flush=True)
+    print("Building LightGBM Dataset and training ...", flush=True)
     clf = lgb.LGBMClassifier(
         n_estimators=args.n_estimators,
         num_leaves=args.num_leaves,
