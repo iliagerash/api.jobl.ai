@@ -87,8 +87,9 @@ def main() -> None:
         n_estimators=args.n_estimators,
         num_leaves=args.num_leaves,
         n_jobs=-1,
+        force_col_wise=True,
         verbose=-1,
-        callbacks=[_progress_callback(1)],
+        callbacks=[lgb.log_evaluation(period=1)],
     )
     clf.fit(X_vec, y)
     print("  Training complete", flush=True)
