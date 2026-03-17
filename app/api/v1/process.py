@@ -29,16 +29,27 @@ _APPLY_KEYWORDS_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
+_EXCLUDE_KEYWORDS_RE = re.compile(
+    r"\b("
+    r"accommodations?|accessibilit"
+    r"|reasonable.{0,20}accommodations?"
+    r"|disability|disabilities|handicap"
+    r"|mesures?.{0,20}d.adaptation|adaptation"
+    r"|accessibilité|personnes?.{0,20}handicapées?"
+    r")\b",
+    re.IGNORECASE,
+)
 _CONTEXT_WINDOW = 300  # characters around the email to search for keywords
 
 
 def _extract_application_email(text: str) -> str | None:
-    """Return the first email that appears near application-submission keywords."""
+    """Return the first email that appears near application-submission keywords
+    but not near accommodation/disability keywords."""
     for m in _EMAIL_RE.finditer(text):
         start = max(0, m.start() - _CONTEXT_WINDOW)
         end = min(len(text), m.end() + _CONTEXT_WINDOW)
         context = text[start:end]
-        if _APPLY_KEYWORDS_RE.search(context):
+        if _APPLY_KEYWORDS_RE.search(context) and not _EXCLUDE_KEYWORDS_RE.search(context):
             return m.group(0)
     return None
 
