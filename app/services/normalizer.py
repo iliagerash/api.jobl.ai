@@ -2,9 +2,10 @@ import contextlib
 import html
 import logging
 import re
+from pathlib import Path
 
 import torch
-from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
+from transformers import AutoModelForSeq2SeqLM, AutoTokenizer, PreTrainedTokenizerFast
 
 try:
     from optimum.onnxruntime import ORTModelForSeq2SeqLM
@@ -90,8 +91,12 @@ class JobTitleNormalizer:
         self.settings = settings
         self._ready = False
         try:
-            tokenizer_dir = settings.tokenizer_dir or settings.model_dir
-            self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_dir, use_fast=False)
+            tokenizer_dir = Path(settings.tokenizer_dir or settings.model_dir)
+            tokenizer_file = tokenizer_dir / "tokenizer.json"
+            if tokenizer_file.exists():
+                self.tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(tokenizer_file))
+            else:
+                self.tokenizer = AutoTokenizer.from_pretrained(str(tokenizer_dir), use_fast=True)
             if _ORT_AVAILABLE:
                 self.model = ORTModelForSeq2SeqLM.from_pretrained(settings.model_dir)
                 logger.info("using ONNX Runtime for inference")
