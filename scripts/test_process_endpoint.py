@@ -85,7 +85,7 @@ def generate_html(rows: list[dict], stats: dict, total_ms: float) -> str:
           <td class="label">Description (cleaned)</td>
         </tr>
         <tr>
-          <td class="desc">{_e(job['description'])}</td>
+          <td class="desc">{job['description']}</td>
           <td class="desc">{data['description_clean']}</td>
         </tr>
         <tr>
@@ -125,7 +125,7 @@ def generate_html(rows: list[dict], stats: dict, total_ms: float) -> str:
   .summary span {{ margin-right: 24px; }}
   table {{ width: 100%; border-collapse: collapse; margin-bottom: 32px; }}
   th, td {{ padding: 6px 10px; text-align: left; vertical-align: top; border: 1px solid #ddd; }}
-  tr.job-header th {{ background: #2c3e50; color: #fff; font-size: 13px; }}
+  tr.job-header th {{ background: #2c3e50; color: #fff; font-size: 13px; width: 50%; }}
   tr.job-end td {{ border-bottom: 3px solid #2c3e50; }}
   td.label {{ font-weight: 600; font-size: 12px; color: #555; background: #fafafa; }}
   td.desc {{ font-size: 12px; max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }}
