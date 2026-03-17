@@ -39,7 +39,13 @@ class SyncWorker:
         self.target_database_url = target_database_url
         self.export_destination = export_destination
 
-    def run_once(self, batch_size: int, only_dbs: set[str] | None = None) -> SyncResult:
+    def run_once(
+        self,
+        batch_size: int,
+        only_dbs: set[str] | None = None,
+        only_countries: set[str] | None = None,
+        resync: bool = False,
+    ) -> SyncResult:
         logger.info(
             "sync iteration started batch_size=%s destination=%s",
             batch_size,
@@ -55,6 +61,12 @@ class SyncWorker:
         source_countries = self._load_source_countries()
         if only_dbs:
             source_countries = [c for c in source_countries if str(c["db_name"]) in only_dbs]
+        if only_countries:
+            normalised = {c.strip().upper() for c in only_countries}
+            source_countries = [
+                c for c in source_countries
+                if self._normalize_country_code(c.get("country_code")) in normalised
+            ]
         logger.info("source countries loaded count=%s", len(source_countries))
         if source_countries:
             logger.info("source dbs=%s", ", ".join(c["db_name"] for c in source_countries))
@@ -70,7 +82,7 @@ class SyncWorker:
                 default_country_code = self._normalize_country_code(country.get("country_code"))
                 default_currency = self._normalize_currency(country.get("currency"))
                 config = country.get("config")
-                last_job_id = self._get_last_job_id(target_engine=target_engine, source_db=db_name)
+                last_job_id = 0 if resync else self._get_last_job_id(target_engine=target_engine, source_db=db_name)
 
                 source_engine = self._create_source_engine(db_name)
                 try:
@@ -83,6 +95,8 @@ class SyncWorker:
                             db_name,
                         )
                         continue
+
+                    has_job_category_column = self._column_exists(source_engine, db_name, "job", "category")
 
                     prefer_currency_from_job = self.currency_in_job_enabled(config)
                     has_job_salary_currency_column = self._job_has_salary_currency_column(source_engine, db_name)
@@ -139,7 +153,9 @@ class SyncWorker:
                             use_region_from_city=use_region_from_city,
                             region_city_column=region_city_column,
                             use_region_join=use_region_join,
+                            has_category_column=has_job_category_column,
                             last_job_id=last_job_id,
+                            skip_export_filter=resync,
                         )
                         if not raw_rows:
                             break
@@ -156,6 +172,7 @@ class SyncWorker:
                             default_currency=default_currency,
                             use_country_code_from_city=use_country_code_from_city,
                             use_currency_from_job=use_currency_from_job,
+                            has_category_column=has_job_category_column,
                         )
 
                         self._upsert_jobs(target_engine=target_engine, payload=jobs_payload)
@@ -351,10 +368,20 @@ class SyncWorker:
         use_region_from_city: bool,
         region_city_column: str,
         use_region_join: bool,
+        has_category_column: bool,
         last_job_id: int,
+        skip_export_filter: bool = False,
     ) -> list[dict[str, object | None]]:
         country_code_sql = "c.country_code AS city_country_code," if use_country_code_from_city else "NULL AS city_country_code,"
         currency_sql = "j.salary_currency AS job_salary_currency," if use_currency_from_job else "NULL AS job_salary_currency,"
+        category_sql = "j.category AS job_category," if has_category_column else "NULL AS job_category,"
+        export_filter_sql = "" if skip_export_filter else """
+              AND NOT EXISTS (
+                SELECT 1
+                FROM export_ai e
+                WHERE e.job_id = j.id
+                  AND e.destination = :destination
+            )"""
         region_sql, region_join_sql = self._build_region_sql(
             use_region_from_city=use_region_from_city,
             region_city_column=region_city_column,
@@ -377,6 +404,7 @@ class SyncWorker:
                 {region_sql}
                 {country_code_sql}
                 {currency_sql}
+                {category_sql}
                 j.salary_min,
                 j.salary_max,
                 j.salary_period,
@@ -390,13 +418,7 @@ class SyncWorker:
             LEFT JOIN city c ON c.id = j.city_id
             {region_join_sql}
             LEFT JOIN site s ON s.id = j.site_id
-            WHERE j.id > :last_job_id
-              AND NOT EXISTS (
-                SELECT 1
-                FROM export_ai e
-                WHERE e.job_id = j.id
-                  AND e.destination = :destination
-            )
+            WHERE j.id > :last_job_id{export_filter_sql}
             ORDER BY j.id
             LIMIT :batch_size
             """
@@ -449,6 +471,7 @@ class SyncWorker:
         default_currency: str | None,
         use_country_code_from_city: bool,
         use_currency_from_job: bool,
+        has_category_column: bool = False,
     ) -> list[dict[str, object | None]]:
         payload: list[dict[str, object | None]] = []
         now = datetime.now(timezone.utc)
@@ -499,6 +522,7 @@ class SyncWorker:
                     "expires_at": expires_at,
                     "is_remote": self._is_remote(row.get("subcategory")),
                     "is_active": is_active,
+                    "category": str(row["job_category"]).strip() or None if row.get("job_category") else None,
                 }
             )
         return payload
@@ -521,7 +545,8 @@ class SyncWorker:
                 country_code, language_code,
                 salary_min, salary_max, salary_period, salary_currency,
                 contract, experience, education,
-                published_at, expires_at, is_remote, is_active
+                published_at, expires_at, is_remote, is_active,
+                category
             ) VALUES (
                 :source_db, :source_job_id, :site_id, :external_id,
                 :title, :description, :company_id, :company_name, :site_title, :url,
@@ -529,7 +554,8 @@ class SyncWorker:
                 :country_code, :language_code,
                 :salary_min, :salary_max, :salary_period, :salary_currency,
                 :contract, :experience, :education,
-                :published_at, :expires_at, :is_remote, :is_active
+                :published_at, :expires_at, :is_remote, :is_active,
+                :category
             )
             ON CONFLICT ON CONSTRAINT uq_jobs_source_external
             DO UPDATE SET
@@ -558,7 +584,8 @@ class SyncWorker:
                 published_at = EXCLUDED.published_at,
                 expires_at = EXCLUDED.expires_at,
                 is_remote = EXCLUDED.is_remote,
-                is_active = EXCLUDED.is_active
+                is_active = EXCLUDED.is_active,
+                category = COALESCE(EXCLUDED.category, jobs.category)
             """
         )
         with target_engine.begin() as conn:

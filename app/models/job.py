@@ -68,6 +68,9 @@ class Job(Base):
     is_remote: Mapped[bool] = mapped_column(BOOLEAN, nullable=False, default=False, server_default="false")
     is_active: Mapped[bool] = mapped_column(BOOLEAN, nullable=False, default=True, server_default="true")
 
+    # Source category (original value from source DB)
+    category: Mapped[str | None] = mapped_column(VARCHAR(255), nullable=True)
+
     # Local AI processing
     title_clean: Mapped[str | None] = mapped_column(TEXT, nullable=True)
     description_clean: Mapped[str | None] = mapped_column(TEXT, nullable=True)

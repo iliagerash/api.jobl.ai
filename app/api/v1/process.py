@@ -39,7 +39,7 @@ _EXCLUDE_KEYWORDS_RE = re.compile(
     r")\b",
     re.IGNORECASE,
 )
-_CONTEXT_WINDOW = 300  # characters around the email to search for keywords
+_CONTEXT_WINDOW = 150  # characters around the email to search for keywords
 
 # Keywords that may appear in the local part of an application email address
 _LOCAL_PART_RE = re.compile(

@@ -17,12 +17,25 @@ def parse_args() -> argparse.Namespace:
         dest="dbs",
         help="Source DB name to sync (repeatable). Example: --db=americas --db=australia",
     )
+    parser.add_argument(
+        "--country",
+        dest="countries",
+        default=None,
+        help="Comma-separated country codes to sync. Example: --country=us,ca",
+    )
+    parser.add_argument(
+        "--resync",
+        action="store_true",
+        default=False,
+        help="Re-sync from the beginning, ignoring export_ai filter and resetting last_job_id.",
+    )
     return parser.parse_args()
 
 
 def run() -> int:
     args = parse_args()
     only_dbs = set(args.dbs or [])
+    only_countries = {c.strip().upper() for c in args.countries.split(",")} if args.countries else None
     configure_logging(settings.log_level)
     worker = SyncWorker(
         source_db_driver=settings.source_db_driver,
@@ -41,8 +54,17 @@ def run() -> int:
     )
     if only_dbs:
         logger.info("db filter enabled dbs=%s", ",".join(sorted(only_dbs)))
+    if only_countries:
+        logger.info("country filter enabled countries=%s", ",".join(sorted(only_countries)))
+    if args.resync:
+        logger.info("resync mode enabled — export_ai filter skipped, last_job_id reset to 0")
     try:
-        result = worker.run_once(batch_size=settings.sync_batch_size, only_dbs=only_dbs)
+        result = worker.run_once(
+            batch_size=settings.sync_batch_size,
+            only_dbs=only_dbs,
+            only_countries=only_countries,
+            resync=args.resync,
+        )
     except KeyboardInterrupt:
         logger.warning("interrupted by user (Ctrl+C), exiting gracefully")
         return 130

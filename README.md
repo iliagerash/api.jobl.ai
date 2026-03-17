@@ -60,6 +60,7 @@ api.jobl.ai/
 │   │   └── session.py           # Engine + get_db() dependency
 │   ├── models/
 │   │   ├── category.py          # categories table
+│   │   ├── category_map.py      # category_map table
 │   │   ├── country.py           # countries lookup table
 │   │   ├── job.py               # jobs table
 │   │   ├── source_country.py    # source MySQL DB → country mapping
@@ -81,6 +82,7 @@ api.jobl.ai/
 │   └── versions/                # 18 migrations (linear chain)
 ├── scripts/
 │   ├── generate_training_data.py  # Bootstrap categorizer training CSV from DB
+│   ├── seed_category_map.py       # Seed category_map table from CSV
 │   └── train_categorizer.py       # Train LightGBM, save .pkl artifact
 ├── sql/
 │   ├── seed_categories.sql      # 26 category rows
@@ -237,15 +239,16 @@ PostgreSQL. Schema managed by Alembic.
 
 | Table | Description |
 |---|---|
-| `jobs` | Synced job postings (title, description, location, salary, AI fields) |
+| `jobs` | Synced job postings (title, description, location, salary, AI fields, `category`) |
 | `categories` | 26 industry categories (id, title) |
+| `category_map` | Maps source category strings → local `category_id` |
 | `countries` | Country lookup (code, name, alternate_names, language_codes) |
 | `source_countries` | MySQL source DB → country/currency/config mapping |
 | `sync_state` | Sync cursor: last synced job ID per (source_db, destination) pair |
 
 ### Migrations
 
-18 migrations in a linear chain. Current head: `7e8f9a0b1c2d` (drop normalization_samples).
+20 migrations in a linear chain. Current head: `b5c6d7e8f9a0` (add_category_to_jobs_and_category_map).
 
 ---
 
@@ -381,12 +384,26 @@ alembic revision --autogenerate -m "describe change"
 
 ### 1. Generate training data from the database
 
-Queries EN/FR jobs and assigns preliminary category labels using keyword rules.
+Queries EN/FR jobs, joins `category_map`, and writes labeled training rows.
 
 ```bash
+# All countries, category_map where available, heuristics as fallback
 python scripts/generate_training_data.py \
   --output data/ \
   --limit 100000
+
+# US + CA only
+python scripts/generate_training_data.py \
+  --output data/ \
+  --limit 100000 \
+  --countries=us,ca
+
+# Only rows with a category_map match (discard unmapped rows)
+python scripts/generate_training_data.py \
+  --output data/ \
+  --limit 100000 \
+  --countries=us,ca \
+  --no-heuristics
 ```
 
 `DATABASE_URL` is read from `.env` automatically.
@@ -394,6 +411,13 @@ python scripts/generate_training_data.py \
 Outputs:
 - `data/categorizer_training.csv` — columns: `title`, `original_category`, `description_plaintext`, `category_id`
 - `data/categories.csv` — 26 categories
+
+The script prints a summary of how many rows came from `category_map` vs. keyword heuristics:
+```
+Fetched 87432 jobs from DB
+Wrote 87432 training rows to data/categorizer_training.csv
+  from category_map: 61204 | from heuristics: 26228
+```
 
 ### 2. Train the model
 
@@ -467,6 +491,14 @@ jobl-sync
 # Sync specific databases only
 jobl-sync --db americas --db australia
 
+# Sync specific countries only
+jobl-sync --country=us,ca
+
+# Re-sync from the beginning (resets cursor, skips export_ai filter)
+# Use this to backfill jobs.category after adding the category column
+jobl-sync --resync
+jobl-sync --resync --country=us,ca
+
 # Backfill language_code for existing jobs without one
 jobl-sync-language-backfill
 jobl-sync-language-backfill --batch-size 5000 --limit 50000 --from-id 0
@@ -474,6 +506,11 @@ jobl-sync-language-backfill --overwrite   # recompute even if already set
 ```
 
 Source databases are configured in the `source_countries` table (columns: `db_name`, `country_code`, `currency`, `config`).
+
+`--resync` behaviour:
+- Resets `last_job_id` to 0 for all matched sources (jobs are re-fetched from the beginning)
+- Removes the `export_ai` deduplication filter so already-exported jobs are processed again
+- Uses `COALESCE(new_value, existing_value)` for `category`, so existing values are never overwritten with NULL
 
 ---
 
@@ -498,6 +535,9 @@ $EDITOR .env   # set DATABASE_URL, model paths, etc.
 psql $DATABASE_URL < sql/seed_categories.sql
 psql $DATABASE_URL < sql/seed_countries.sql
 psql $DATABASE_URL < sql/seed_source_countries.sql
+
+# Seed category mappings
+python scripts/seed_category_map.py --input data/category_map.csv
 ```
 
 ### 3. Configure systemd

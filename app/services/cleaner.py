@@ -569,6 +569,12 @@ _UI_ARTIFACT_RE = re.compile(
     r"|retour\s+(?:aux|à\s+la\s+liste\s+des)\s+offres?"
     r"|(?:accueil\s+)?postulez\s+nos\s+offres?"
     r"|share\s+(?:link|on\s+\w+|via\s+\w+)"
+    r"|job\s+description|description"
+    r"|log\s+in\s+today(?:\s+and)?"
+    r"|register\s+now(?:\s+to\s+get\s+started)?"
+    r"|get\s+real.time\s+job\s+notifications?"
+    r"|view\s+pay\s+(?:&|and)\s+facility\s+details?"
+    r"|search\s+jobs?"
     r")\s*$",
     re.IGNORECASE,
 )
