@@ -78,7 +78,7 @@ def main() -> None:
     y = df["category_id"].astype(int).tolist()
 
     print("Vectorizing text (TF-IDF) ...", flush=True)
-    tfidf = TfidfVectorizer(max_features=50_000, ngram_range=(1, 2), sublinear_tf=True)
+    tfidf = TfidfVectorizer(max_features=20_000, ngram_range=(1, 2), sublinear_tf=True)
     X_vec = tfidf.fit_transform(X)
     print(f"  Done — matrix shape: {X_vec.shape}", flush=True)
 
@@ -89,7 +89,7 @@ def main() -> None:
         n_jobs=-1,
         force_col_wise=True,
         verbose=-1,
-        callbacks=[lgb.log_evaluation(period=1)],
+        callbacks=[_progress_callback(1)],
     )
     clf.fit(X_vec, y)
     print("  Training complete", flush=True)
