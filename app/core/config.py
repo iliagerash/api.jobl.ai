@@ -14,6 +14,7 @@ class Settings(BaseSettings):
 
     # Normalizer (seq2seq model — optional, falls back to rules-only if absent)
     model_dir: str | None = None
+    tokenizer_dir: str | None = None  # defaults to model_dir if not set
     num_beams: int = 4
     max_new_tokens: int = 32
     max_input_length: int = 128
@@ -23,7 +24,7 @@ class Settings(BaseSettings):
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    @field_validator("model_dir", "categorizer_model_path", mode="after")
+    @field_validator("model_dir", "tokenizer_dir", "categorizer_model_path", mode="after")
     @classmethod
     def _resolve_path(cls, v: str | None) -> str | None:
         if v is None:

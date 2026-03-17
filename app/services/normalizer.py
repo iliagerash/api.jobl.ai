@@ -90,7 +90,8 @@ class JobTitleNormalizer:
         self.settings = settings
         self._ready = False
         try:
-            self.tokenizer = AutoTokenizer.from_pretrained(settings.model_dir, use_fast=False)
+            tokenizer_dir = settings.tokenizer_dir or settings.model_dir
+            self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_dir, use_fast=False)
             if _ORT_AVAILABLE:
                 self.model = ORTModelForSeq2SeqLM.from_pretrained(settings.model_dir)
                 logger.info("using ONNX Runtime for inference")
