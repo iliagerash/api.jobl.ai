@@ -128,7 +128,7 @@ def generate_html(rows: list[dict], stats: dict, total_ms: float) -> str:
   tr.job-header th {{ background: #2c3e50; color: #fff; font-size: 13px; width: 50%; }}
   tr.job-end td {{ border-bottom: 3px solid #2c3e50; }}
   td.label {{ font-weight: 600; font-size: 12px; color: #555; background: #fafafa; }}
-  td.desc {{ font-size: 12px; max-height: 200px; overflow-y: auto; white-space: pre-wrap; word-break: break-word; }}
+  td.desc {{ font-size: 12px; white-space: pre-wrap; word-break: break-word; }}
   tr.error td {{ background: #fff0f0; color: #c00; }}
 </style>
 </head>

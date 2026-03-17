@@ -13,7 +13,7 @@ Transformations applied
 2.  Strip malformed !*!<…> sentinel blocks  (rare job-board artefact)
 3.  Unwrap layout-only tags: <span>, <font>, <div>, <table>, <center>, …
 4.  Strip all HTML attributes  (style=, class=, id=, …)
-5.  Remove <br> trapped inside <strong>/<b>  (splits headers incorrectly)
+5.  Split <strong>/<b> on interior <br>  → sibling bold elements + bare <br>
 6.  Unwrap nested <strong><strong> and <b><b>
 7.  Merge consecutive sibling bold tags that are both short header fragments
     — but NOT when one text is a substring of the other (parent+child headers)
@@ -148,8 +148,8 @@ def _parse_date(text: str) -> date | None:
         except ValueError:
             pass
 
-    # Numeric DD/MM/YYYY
-    m = re.match(r"^(\d{1,2})/(\d{2})/(\d{4})$", text)
+    # Numeric DD/MM/YYYY or DD-MM-YYYY
+    m = re.match(r"^(\d{1,2})[/\-](\d{2})[/\-](\d{4})$", text)
     if m:
         try:
             return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
@@ -267,7 +267,7 @@ class CleanResult:
 
 def _is_header_fragment(text: str) -> bool:
     text = text.strip()
-    if not text or len(text) > 60:
+    if not text or len(text) < 2 or len(text) > 60:
         return False
     if len(text.split()) > 8:
         return False
@@ -278,7 +278,7 @@ def _is_header_fragment(text: str) -> bool:
 
 def _is_section_header(text: str) -> bool:
     text = text.strip().rstrip(":")
-    if not text or len(text) > 80:
+    if not text or len(text) < 2 or len(text) > 80:
         return False
     if len(text.split()) > 9:
         return False
@@ -297,10 +297,45 @@ def _strip_all_attributes(body: Tag) -> None:
         tag.attrs = {}
 
 
-def _strip_br_inside_bold(body: Tag) -> None:
-    for tag in body.find_all(["strong", "b"]):
-        for br in tag.find_all("br"):
-            br.decompose()
+def _split_bold_on_br(body: Tag, soup: BeautifulSoup) -> None:
+    """Split <strong>/<b> containing <br> into multiple sibling bold elements.
+
+    <strong>A<br>B</strong>  →  <strong>A</strong><br><strong>B</strong>
+
+    This lets _collapse_brs treat the <br> like any other line break, producing
+    separate <p> blocks rather than concatenating or silently dropping content.
+    Trailing <br> (empty last segment) are not emitted, so <strong>Header<br></strong>
+    becomes just <strong>Header</strong> and the header-promotion logic is unaffected.
+    """
+    for tag in list(body.find_all(["strong", "b"])):
+        if not tag.find("br"):
+            continue
+        tag_name = tag.name
+        segments: list[list] = []
+        current: list = []
+        for child in list(tag.children):
+            if isinstance(child, Tag) and child.name == "br":
+                segments.append(current)
+                current = []
+            else:
+                current.append(child)
+        segments.append(current)
+
+        new_nodes: list = []
+        for i, seg in enumerate(segments):
+            inner = "".join(str(c) for c in seg).strip()
+            if inner:
+                new_tag = BeautifulSoup(f"<{tag_name}>{inner}</{tag_name}>", "lxml").find(tag_name)
+                new_nodes.append(new_tag)
+            if i < len(segments) - 1 and inner:
+                new_nodes.append(soup.new_tag("br"))
+
+        if not new_nodes:
+            tag.decompose()
+            continue
+        tag.replace_with(new_nodes[0])
+        for i, node in enumerate(new_nodes[1:], 1):
+            new_nodes[i - 1].insert_after(node)
 
 
 def _unwrap_nested_bold(body: Tag) -> None:
@@ -323,6 +358,9 @@ def _merge_consecutive_bold(body: Tag) -> None:
         if not (_is_header_fragment(t1) and _is_header_fragment(t2)):
             continue
         if t1.lower() in t2.lower() or t2.lower() in t1.lower():
+            continue
+        # Both are standalone headers — keep separate so each becomes its own <h3>
+        if _is_section_header(t1) and _is_section_header(t2):
             continue
         tag.string = t1 + " " + t2
         nxt.decompose()
@@ -377,11 +415,51 @@ def _split_on_brs(container: Tag, soup: BeautifulSoup) -> None:
         container.append(node)
 
 
+def _split_p_on_brs(p: Tag, soup: BeautifulSoup) -> None:
+    """Replace a <p> that contains <br> with sibling <p> elements.
+
+    Unlike _split_on_brs (designed for the body container), this function
+    inserts the new paragraphs as siblings — avoiding nested <p> that
+    _fix_nested_p would later unwrap, concatenating the content.
+    """
+    segments: list[list] = []
+    bucket: list = []
+    for child in list(p.children):
+        if isinstance(child, Tag) and child.name == "br":
+            segments.append(bucket)
+            bucket = []
+        else:
+            bucket.append(child)
+    segments.append(bucket)
+
+    new_paras: list[Tag] = []
+    for seg in segments:
+        parts = [
+            str(c) if isinstance(c, Tag) else str(c).strip()
+            for c in seg
+            if not (isinstance(c, NavigableString) and not str(c).strip())
+        ]
+        inner = " ".join(p for p in parts if p).strip()
+        if inner:
+            frag = BeautifulSoup(f"<p>{inner}</p>", "lxml").find("p")
+            if frag:
+                new_paras.append(frag)
+
+    if not new_paras:
+        p.decompose()
+    elif len(new_paras) == 1:
+        p.replace_with(new_paras[0])
+    else:
+        p.replace_with(new_paras[0])
+        for i, np in enumerate(new_paras[1:], 1):
+            new_paras[i - 1].insert_after(np)
+
+
 def _collapse_brs(body: Tag, soup: BeautifulSoup) -> None:
     _split_on_brs(body, soup)
     for p in list(body.find_all("p")):
         if p.find("br"):
-            _split_on_brs(p, soup)
+            _split_p_on_brs(p, soup)
 
 
 def _promote_leading_bold_in_p(soup: BeautifulSoup, body: Tag) -> None:
@@ -465,6 +543,12 @@ def _wrap_naked_text(soup: BeautifulSoup, body: Tag) -> None:
             p.string = child.strip()
 
 
+def _remove_ui_artifacts(body: Tag) -> None:
+    for tag in list(body.find_all(["p", "h2", "h3", "h4"])):
+        if _UI_ARTIFACT_RE.match(tag.get_text(strip=True)):
+            tag.decompose()
+
+
 def _drop_empty_blocks(body: Tag) -> None:
     for tag in body.find_all(["p", "li", "h2", "h3", "h4"]):
         if not tag.get_text(strip=True):
@@ -477,15 +561,34 @@ def _enforce_allowed_tags(body: Tag) -> None:
             tag.unwrap()
 
 
+_MD_BOLD_RE = re.compile(r"\*\*([^\*\n]+?)\*\*|\*([^\*\n]+?)\*")
+
+_UI_ARTIFACT_RE = re.compile(
+    r"^(apply(?:\s+(?:now|for\s+this\s+(?:job|position|role)))?|back\s+to\s+search\s+results?"
+    r"|postulez(?:\s+maintenant)?|accueil|nos\s+offres?|toutes?\s+les\s+offres?"
+    r"|retour\s+(?:aux|à\s+la\s+liste\s+des)\s+offres?"
+    r"|(?:accueil\s+)?postulez\s+nos\s+offres?"
+    r"|share\s+(?:link|on\s+\w+|via\s+\w+)"
+    r")\s*$",
+    re.IGNORECASE,
+)
+
+
+def _convert_markdown_bold(src: str) -> str:
+    """Convert **text** and *text* to <strong>text</strong>."""
+    return _MD_BOLD_RE.sub(lambda m: f"<strong>{m.group(1) or m.group(2)}</strong>", src)
+
+
 def _build_clean_html(raw_html: str) -> str:
     src = urllib.parse.unquote(raw_html)
     src = re.sub(r"!?\*!<.*", "", src, flags=re.DOTALL)
+    src = _convert_markdown_bold(src)
     soup = BeautifulSoup(src, "lxml")
     body: Tag = soup.find("body") or soup  # type: ignore[assignment]
 
     _unwrap_layout_tags(body)
     _strip_all_attributes(body)
-    _strip_br_inside_bold(body)
+    _split_bold_on_br(body, soup)
     _unwrap_nested_bold(body)
     _merge_consecutive_bold(body)
     _promote_standalone_bold(soup, body)
@@ -494,6 +597,7 @@ def _build_clean_html(raw_html: str) -> str:
     _fix_h3_in_p(body)
     _fix_nested_p(body)
     _wrap_naked_text(soup, body)
+    _remove_ui_artifacts(body)
     _drop_empty_blocks(body)
     _enforce_allowed_tags(body)
 

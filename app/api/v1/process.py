@@ -41,15 +41,31 @@ _EXCLUDE_KEYWORDS_RE = re.compile(
 )
 _CONTEXT_WINDOW = 300  # characters around the email to search for keywords
 
+# Keywords that may appear in the local part of an application email address
+_LOCAL_PART_RE = re.compile(
+    r"apply|application|careers?|recruit\w*|hiring|jobs?|emploi|candidat\w*|rh|hr",
+    re.IGNORECASE,
+)
+
 
 def _extract_application_email(text: str) -> str | None:
-    """Return the first email that appears near application-submission keywords
-    but not near accommodation/disability keywords."""
+    """Return the first email that looks like an application address.
+
+    Two strategies (both require absence of accommodation/disability keywords):
+    1. Email appears near apply/submit/cv keywords in a 300-char context window.
+    2. Email local part (left of @) itself contains apply/careers/hr/recruitment
+       keywords — e.g. careers@company.com, hr@acme.org, recruitment@firm.com.
+    """
     for m in _EMAIL_RE.finditer(text):
         start = max(0, m.start() - _CONTEXT_WINDOW)
         end = min(len(text), m.end() + _CONTEXT_WINDOW)
         context = text[start:end]
-        if _APPLY_KEYWORDS_RE.search(context) and not _EXCLUDE_KEYWORDS_RE.search(context):
+        if _EXCLUDE_KEYWORDS_RE.search(context):
+            continue
+        if _APPLY_KEYWORDS_RE.search(context):
+            return m.group(0)
+        local_part = m.group(0).split("@")[0]
+        if _LOCAL_PART_RE.search(local_part):
             return m.group(0)
     return None
 
@@ -91,7 +107,10 @@ def process(body: ProcessRequest, request: Request) -> ProcessResponse:
 
     if lang not in _EN_FR:
         # Non-EN/FR: description cleanup only, pass original_category through unchanged
-        category = CategoryOut(id=None, title=body.original_category) if body.original_category else None
+        if body.original_category:
+            category = CategoryOut(id=None, title=body.original_category)
+        else:
+            category = CategoryOut(id=26, title="Other")
         return ProcessResponse(
             title_normalized=body.title,
             description_clean=clean_result.html,
