@@ -1,17 +1,10 @@
-import contextlib
 import html
 import logging
 import re
-from pathlib import Path
 
 import torch
 from transformers import AutoModelForSeq2SeqLM, AutoTokenizer
 
-try:
-    from optimum.onnxruntime import ORTModelForSeq2SeqLM
-    _ORT_AVAILABLE = True
-except ImportError:
-    _ORT_AVAILABLE = False
 
 from app.core.config import Settings
 from app.services.language import detect_language_code
@@ -91,18 +84,13 @@ class JobTitleNormalizer:
         self.settings = settings
         self._ready = False
         try:
-            tokenizer_dir = str(Path(settings.tokenizer_dir or settings.model_dir))
-            self.tokenizer = AutoTokenizer.from_pretrained(tokenizer_dir, use_fast=True)
-            if _ORT_AVAILABLE:
-                self.model = ORTModelForSeq2SeqLM.from_pretrained(settings.model_dir)
-                logger.info("using ONNX Runtime for inference")
-            else:
-                self.model = AutoModelForSeq2SeqLM.from_pretrained(
-                    settings.model_dir,
-                    dtype=torch.float32,
-                    low_cpu_mem_usage=True,
-                )
-                self.model.eval()
+            self.tokenizer = AutoTokenizer.from_pretrained(settings.model_dir, use_fast=True)
+            self.model = AutoModelForSeq2SeqLM.from_pretrained(
+                settings.model_dir,
+                dtype=torch.float32,
+                low_cpu_mem_usage=True,
+            )
+            self.model.eval()
             self._cache: dict[tuple, str] = {}
             self._cache_max = 50_000
             self._ready = True
@@ -160,7 +148,7 @@ class JobTitleNormalizer:
             max_length=self.settings.max_input_length,
             return_tensors="pt",
         )
-        with torch.no_grad() if not _ORT_AVAILABLE else contextlib.nullcontext():
+        with torch.no_grad():
             outputs = self.model.generate(
                 **inputs,
                 num_beams=self.settings.num_beams,
