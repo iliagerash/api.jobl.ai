@@ -94,7 +94,12 @@ class JobTitleNormalizer:
             tokenizer_dir = Path(settings.tokenizer_dir or settings.model_dir)
             tokenizer_file = tokenizer_dir / "tokenizer.json"
             if tokenizer_file.exists():
-                self.tokenizer = PreTrainedTokenizerFast(tokenizer_file=str(tokenizer_file))
+                self.tokenizer = PreTrainedTokenizerFast(
+                    tokenizer_file=str(tokenizer_file),
+                    pad_token="<pad>",
+                    eos_token="</s>",
+                    unk_token="<unk>",
+                )
             else:
                 self.tokenizer = AutoTokenizer.from_pretrained(str(tokenizer_dir), use_fast=True)
             if _ORT_AVAILABLE:
