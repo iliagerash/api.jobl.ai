@@ -1,6 +1,8 @@
 import logging
 import pickle
 
+import numpy as np
+
 logger = logging.getLogger("jobl.api.categorizer")
 
 
@@ -10,8 +12,9 @@ class JobCategorizer:
         try:
             with open(model_path, "rb") as f:
                 artifact = pickle.load(f)
-            self._pipeline = artifact["pipeline"]            # sklearn Pipeline (TF-IDF + LightGBM)
-            self._id_to_category = artifact["id_to_category"]  # {int: {"id": int, "title": str}}
+            self._tfidf = artifact["tfidf"]
+            self._booster = artifact["booster"]
+            self._id_to_category = artifact["id_to_category"]
             self._ready = True
             logger.info("categorizer loaded from %s", model_path)
         except Exception as exc:
@@ -22,5 +25,7 @@ class JobCategorizer:
 
     def predict(self, title: str, original_category: str | None, desc_plain: str) -> dict:
         text = f"{title} {original_category or ''} {desc_plain[:1000]}"
-        pred_id = int(self._pipeline.predict([text])[0])
-        return self._id_to_category[pred_id]
+        X = self._tfidf.transform([text])
+        probs = self._booster.predict(X)           # shape (1, num_classes)
+        pred_class = int(np.argmax(probs[0]))      # 0-based
+        return self._id_to_category[pred_class + 1]  # back to 1-based id
