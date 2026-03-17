@@ -77,19 +77,23 @@ def main() -> None:
     X = df.apply(build_text, axis=1).tolist()
     y = df["category_id"].astype(int).tolist()
 
-    print("Training pipeline ...")
-    pipeline = Pipeline([
-        ("tfidf", TfidfVectorizer(max_features=50_000, ngram_range=(1, 2), sublinear_tf=True)),
-        ("clf", lgb.LGBMClassifier(
-            n_estimators=args.n_estimators,
-            num_leaves=args.num_leaves,
-            n_jobs=-1,
-            verbose=-1,
-            callbacks=[_progress_callback(1)],
-        )),
-    ])
-    pipeline.fit(X, y)
-    print("  Training complete")
+    print("Vectorizing text (TF-IDF) ...", flush=True)
+    tfidf = TfidfVectorizer(max_features=50_000, ngram_range=(1, 2), sublinear_tf=True)
+    X_vec = tfidf.fit_transform(X)
+    print(f"  Done — matrix shape: {X_vec.shape}", flush=True)
+
+    print("Training LightGBM classifier ...", flush=True)
+    clf = lgb.LGBMClassifier(
+        n_estimators=args.n_estimators,
+        num_leaves=args.num_leaves,
+        n_jobs=-1,
+        verbose=-1,
+        callbacks=[_progress_callback(1)],
+    )
+    clf.fit(X_vec, y)
+    print("  Training complete", flush=True)
+
+    pipeline = Pipeline([("tfidf", tfidf), ("clf", clf)])
 
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
     with open(args.output, "wb") as f:
