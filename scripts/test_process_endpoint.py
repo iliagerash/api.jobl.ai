@@ -23,20 +23,26 @@ from sqlalchemy import text
 from app.db.session import SessionLocal
 
 
-def fetch_jobs(limit: int) -> list[dict]:
+def fetch_jobs(limit: int, countries: list[str] | None = None) -> list[dict]:
     db = SessionLocal()
     try:
+        country_filter = ""
+        params: dict = {"limit": limit}
+        if countries:
+            country_filter = "AND country_code = ANY(:countries)"
+            params["countries"] = countries
         rows = db.execute(
-            text("""
+            text(f"""
                 SELECT id, title, description, category
                 FROM jobs
                 WHERE language_code IN ('en', 'fr')
                   AND title IS NOT NULL
                   AND description IS NOT NULL
+                  {country_filter}
                 ORDER BY RANDOM()
                 LIMIT :limit
             """),
-            {"limit": limit},
+            params,
         ).fetchall()
     finally:
         db.close()
@@ -154,10 +160,12 @@ def main() -> None:
     parser.add_argument("--limit", type=int, required=True, help="Number of random jobs to test")
     parser.add_argument("--url", default="http://localhost:8000", help="API base URL (default: http://localhost:8000)")
     parser.add_argument("--out", default=None, help="Write HTML report to this file")
+    parser.add_argument("--country", default=None, help="Comma-separated country codes to filter (e.g. us,ca)")
     args = parser.parse_args()
 
+    countries = [c.strip().upper() for c in args.country.split(",")] if args.country else None
     print(f"Fetching {args.limit} random EN/FR jobs from DB ...")
-    jobs = fetch_jobs(args.limit)
+    jobs = fetch_jobs(args.limit, countries=countries)
     print(f"  {len(jobs)} rows fetched\n")
 
     endpoint = f"{args.url.rstrip('/')}/v1/process"
