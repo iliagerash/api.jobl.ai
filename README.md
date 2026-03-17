@@ -255,12 +255,13 @@ PostgreSQL. Schema managed by Alembic.
 
 ```bash
 cd api.jobl.ai
-
-# Create virtualenv
 python3 -m venv .venv
 source .venv/bin/activate
 
-# Install (includes dev extras)
+# Production install
+pip install -e .
+
+# Development install (adds pytest)
 pip install -e ".[dev]"
 
 # Copy and edit environment
@@ -275,6 +276,13 @@ psql $DATABASE_URL < sql/seed_categories.sql
 psql $DATABASE_URL < sql/seed_countries.sql
 psql $DATABASE_URL < sql/seed_source_countries.sql
 ```
+
+### Dependency scopes
+
+| Scope | Command | Includes |
+|---|---|---|
+| Production | `pip install -e .` | API, sync worker, training scripts, test endpoint script |
+| Development | `pip install -e ".[dev]"` | Production + pytest |
 
 ---
 
