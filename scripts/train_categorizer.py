@@ -58,6 +58,12 @@ def main() -> None:
     print(f"Loading training data from {args.data} ...")
     df = pd.read_csv(args.data).fillna("")
     print(f"  {len(df)} rows loaded")
+    if df.empty:
+        sys.exit(
+            "Error: training data is empty.\n"
+            "Generate it first:\n"
+            "  python scripts/generate_training_data.py --output data/"
+        )
 
     id_to_category = {cat_id: {"id": cat_id, "title": title} for cat_id, title in CATEGORIES}
     num_classes = len(id_to_category)
