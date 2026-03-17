@@ -16,6 +16,32 @@ router = APIRouter()
 _EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
 _EN_FR = {"en", "fr"}
 
+# Keywords that suggest an email is for submitting an application
+_APPLY_KEYWORDS_RE = re.compile(
+    r"\b("
+    r"apply|applying|application|applicants?"
+    r"|submit|submission"
+    r"|send.{0,30}(resume|cv|application|candidature)"
+    r"|email.{0,30}(resume|cv|application|candidature)"
+    r"|resume|curriculum vitae|\bcv\b|cover.?letter"
+    r"|postuler|candidature|soumettre|envoyer.{0,30}(cv|candidature|courriel)"
+    r"|faire.{0,10}demande"
+    r")\b",
+    re.IGNORECASE,
+)
+_CONTEXT_WINDOW = 300  # characters around the email to search for keywords
+
+
+def _extract_application_email(text: str) -> str | None:
+    """Return the first email that appears near application-submission keywords."""
+    for m in _EMAIL_RE.finditer(text):
+        start = max(0, m.start() - _CONTEXT_WINDOW)
+        end = min(len(text), m.end() + _CONTEXT_WINDOW)
+        context = text[start:end]
+        if _APPLY_KEYWORDS_RE.search(context):
+            return m.group(0)
+    return None
+
 
 class ProcessRequest(BaseModel):
     title: str = Field(min_length=1, max_length=512)
@@ -79,10 +105,9 @@ def process(body: ProcessRequest, request: Request) -> ProcessResponse:
     if isinstance(clean_result.expiry, date):
         expiry_date = clean_result.expiry.isoformat()
 
-    # 5. Extract email and mask in HTML
+    # 5. Extract application email and mask it in HTML
     plain_text = BeautifulSoup(clean_result.html, "lxml").get_text()
-    email_match = _EMAIL_RE.search(plain_text)
-    application_email: str | None = email_match.group(0) if email_match else None
+    application_email: str | None = _extract_application_email(plain_text)
     description_clean = clean_result.html
     if application_email:
         description_clean = description_clean.replace(application_email, "***email_hidden***")
