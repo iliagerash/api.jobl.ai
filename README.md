@@ -396,19 +396,55 @@ python scripts/train_categorizer.py \
   --output models/categorizer.pkl
 ```
 
-Pipeline: `TfidfVectorizer(max_features=50_000, ngram_range=(1,2), sublinear_tf=True)` → `LGBMClassifier(n_estimators=300, num_leaves=63)`
+Pipeline: `TfidfVectorizer(max_features=20_000, ngram_range=(1,2), min_df=5, sublinear_tf=True)` → native `lgb.train()` with multiclass objective and early stopping.
 
 Artifact format:
 ```python
 {
-    "pipeline": sklearn.pipeline.Pipeline,        # fitted
-    "id_to_category": {int: {"id": int, "title": str}}
+    "tfidf": TfidfVectorizer,                     # fitted
+    "booster": lgb.Booster,                       # trained native booster
+    "id_to_category": {int: {"id": int, "title": str}},
+    "num_classes": int,
 }
+```
+
+Training prints validation loss every 10 rounds and stops automatically when it stops improving:
+```
+[10]    val's multi_logloss: 0.761
+[20]    val's multi_logloss: 0.610
+Early stopping, best iteration is:
+[23]    val's multi_logloss: 0.608
 ```
 
 ### 3. Activate the model
 
 Set `CATEGORIZER_MODEL_PATH=models/categorizer.pkl` in `.env` and restart the API.
+
+### 4. Evaluate against live data
+
+With the API running, test categorization quality against random jobs from the database:
+
+```bash
+python scripts/test_process_endpoint.py --limit 100
+python scripts/test_process_endpoint.py --limit 500 --url http://localhost:8000
+```
+
+Each row prints: job ID, latency, original title → normalized title, and ✓/✗ for email/expiry/category. Final summary shows hit rates and average latency.
+
+```
+[ 1/100] id=12345   142ms | 'Software Engineer - Full Time' -> 'Software Engineer' | email=✗ expiry=✗ category=Information Technology
+...
+─────────────────────────────────────
+Results (100 jobs)
+─────────────────────────────────────
+  OK:            98 / 100
+  Errors:        2
+  With email:    12 (12.0%)
+  With expiry:   8 (8.0%)
+  With category: 95 (95.0%)
+  Avg latency:   138ms
+─────────────────────────────────────
+```
 
 ---
 
