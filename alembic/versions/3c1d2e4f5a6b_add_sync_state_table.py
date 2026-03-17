@@ -16,19 +16,22 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.create_table(
-        'sync_state',
-        sa.Column('source_db', sa.VARCHAR(length=128), nullable=False),
-        sa.Column('destination', sa.VARCHAR(length=100), nullable=False),
-        sa.Column('last_job_id', sa.BIGINT(), nullable=False, server_default='0'),
-        sa.Column(
-            'updated_at',
-            sa.TIMESTAMP(timezone=True),
-            nullable=False,
-            server_default=sa.text('NOW()'),
-        ),
-        sa.PrimaryKeyConstraint('source_db', 'destination'),
-    )
+    bind = op.get_bind()
+    inspector = sa.inspect(bind)
+    if 'sync_state' not in inspector.get_table_names():
+        op.create_table(
+            'sync_state',
+            sa.Column('source_db', sa.VARCHAR(length=128), nullable=False),
+            sa.Column('destination', sa.VARCHAR(length=100), nullable=False),
+            sa.Column('last_job_id', sa.BIGINT(), nullable=False, server_default='0'),
+            sa.Column(
+                'updated_at',
+                sa.TIMESTAMP(timezone=True),
+                nullable=False,
+                server_default=sa.text('NOW()'),
+            ),
+            sa.PrimaryKeyConstraint('source_db', 'destination'),
+        )
 
 
 def downgrade() -> None:

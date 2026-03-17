@@ -377,10 +377,11 @@ Queries EN/FR jobs and assigns preliminary category labels using keyword rules.
 
 ```bash
 python scripts/generate_training_data.py \
-  --db-url "$DATABASE_URL" \
   --output data/ \
   --limit 100000
 ```
+
+`DATABASE_URL` is read from `.env` automatically.
 
 Outputs:
 - `data/categorizer_training.csv` — columns: `title`, `original_category`, `description_plaintext`, `category_id`

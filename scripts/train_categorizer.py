@@ -38,6 +38,14 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 import lightgbm as lgb
 
 
+def _progress_callback(period: int = 50):
+    def callback(env):
+        if (env.iteration + 1) % period == 0 or env.iteration + 1 == env.end_iteration:
+            print(f"  [{env.iteration + 1}/{env.end_iteration}] iterations", flush=True)
+    callback.order = 10
+    return callback
+
+
 def build_text(row: pd.Series) -> str:
     title = str(row.get("title") or "")
     original_category = str(row.get("original_category") or "")
@@ -77,6 +85,7 @@ def main() -> None:
             num_leaves=args.num_leaves,
             n_jobs=-1,
             verbose=-1,
+            callbacks=[_progress_callback(1)],
         )),
     ])
     pipeline.fit(X, y)
