@@ -80,7 +80,7 @@ def main() -> None:
                     print(
                         f"[{i:>{len(str(len(jobs)))}}/{len(jobs)}] id={job['id']} "
                         f"{elapsed_ms:6.0f}ms | "
-                        f"title: {data['title_normalized'][:60]!r} | "
+                        f"{job['title'][:50]!r} -> {data['title_normalized'][:50]!r} | "
                         f"email={'✓' if has_email else '✗'} "
                         f"expiry={'✓' if has_expiry else '✗'} "
                         f"category={data['category']['title'][:30] if has_category else '✗'}"
