@@ -28,7 +28,7 @@ def fetch_jobs(limit: int) -> list[dict]:
     try:
         rows = db.execute(
             text("""
-                SELECT id, title, description
+                SELECT id, title, description, category
                 FROM jobs
                 WHERE language_code IN ('en', 'fr')
                   AND title IS NOT NULL
@@ -40,7 +40,7 @@ def fetch_jobs(limit: int) -> list[dict]:
         ).fetchall()
     finally:
         db.close()
-    return [{"id": r[0], "title": r[1], "description": r[2]} for r in rows]
+    return [{"id": r[0], "title": r[1], "description": r[2], "category": r[3]} for r in rows]
 
 
 def _e(text: str) -> str:
@@ -89,11 +89,11 @@ def generate_html(rows: list[dict], stats: dict, total_ms: float) -> str:
           <td class="desc">{data['description_clean']}</td>
         </tr>
         <tr>
-          <td class="label">Category</td>
+          <td class="label">Category (source)</td>
           <td class="label">Category (predicted)</td>
         </tr>
         <tr>
-          <td>—</td>
+          <td>{_e(job.get('category') or '—')}</td>
           <td>{_e(cat_out)}</td>
         </tr>
         <tr>
@@ -167,7 +167,7 @@ def main() -> None:
 
     with httpx.Client(timeout=30) as client:
         for i, job in enumerate(jobs, 1):
-            payload = {"title": job["title"], "description": job["description"]}
+            payload = {"title": job["title"], "description": job["description"], "original_category": job.get("category")}
             t0 = time.perf_counter()
             try:
                 resp = client.post(endpoint, json=payload)
