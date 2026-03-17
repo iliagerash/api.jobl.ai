@@ -14,7 +14,7 @@ build/
 venv/
 
 # ML models
-models/
+/models/
 *.pkl
 *.pt
 *.bin
