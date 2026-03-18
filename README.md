@@ -510,7 +510,7 @@ Re-running is safe — already-present jobs are skipped. To top up a class, run 
 ### 2. Review in the labelling UI
 
 ```bash
-sudo python labelling/main.py
+sudo .venv/bin/python labelling/main.py
 ```
 
 Opens at `http://<host>/`. Features:

@@ -71,14 +71,14 @@
   .extracted label { font-weight: 600; color: #555; font-size: 11px; }
   .ext-val { font-family: monospace; word-break: break-all; }
 
-  /* ── Copy button in header ── */
-  th .copy-btn {
-    position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
-    background: none; border: 1px solid #4a6278; color: #adc5d8; border-radius: 4px;
-    padding: 2px 6px; font-size: 11px; cursor: pointer; line-height: 1.4;
+  /* ── Copy button inside cell ── */
+  .cell-copy-btn {
+    float: right; margin: 0 0 6px 8px;
+    background: none; border: 1px solid #ccc; color: #888; border-radius: 4px;
+    padding: 2px 7px; font-size: 11px; cursor: pointer; line-height: 1.4;
   }
-  th .copy-btn:hover  { background: #2c3e50; color: #fff; }
-  th .copy-btn.copied { color: #27ae60; border-color: #27ae60; }
+  .cell-copy-btn:hover  { background: #f0f0f0; color: #333; }
+  .cell-copy-btn.copied { color: #27ae60; border-color: #27ae60; }
 
   /* ── Highlights ── */
   .hl-date  { background: #fff3cd; border-radius: 2px; padding: 0 2px; }
@@ -108,16 +108,6 @@
   <div id="empty">No jobs found for this category.</div>
 
   <table id="jobs-table" style="display:none">
-    <thead>
-      <tr>
-        <th>Original description
-          <button class="copy-btn" onclick="copyColumn('orig')">⎘ Copy</button>
-        </th>
-        <th>Cleaned description
-          <button class="copy-btn" onclick="copyColumn('clean')">⎘ Copy</button>
-        </th>
-      </tr>
-    </thead>
     <tbody id="jobs-tbody"></tbody>
   </table>
 </div>
@@ -208,21 +198,28 @@ function renderJobs(jobs) {
 
     /* ── Left: original description ── */
     const tdOrig = document.createElement('td');
-    tdOrig.innerHTML = `<div class="cell-inner"><div class="desc-orig"></div></div>`;
+    tdOrig.innerHTML = `<div class="cell-inner"><button class="cell-copy-btn" data-col="orig">⎘ Copy</button><div class="desc-orig"></div></div>`;
     tdOrig.querySelector('.desc-orig').innerHTML = job.description_raw || '';
     highlightInElement(tdOrig.querySelector('.desc-orig'));
+    tdOrig.querySelector('.cell-copy-btn').addEventListener('click', e => copyCell(e.currentTarget, tdOrig.querySelector('.desc-orig')));
 
     /* ── Right: cleaned description + category ── */
     const tdClean = document.createElement('td');
     const cellDiv = document.createElement('div');
     cellDiv.className = 'cell-inner';
 
-    // Cleaned description
+    // Copy button + cleaned description
+    const cleanCopyBtn = document.createElement('button');
+    cleanCopyBtn.className = 'cell-copy-btn';
+    cleanCopyBtn.textContent = '⎘ Copy';
+    cellDiv.appendChild(cleanCopyBtn);
+
     const descDiv = document.createElement('div');
     descDiv.className = 'desc-clean';
     descDiv.innerHTML = job.description_clean || '<em style="color:#aaa">No description</em>';
     cellDiv.appendChild(descDiv);
     highlightInElement(descDiv);
+    cleanCopyBtn.addEventListener('click', e => copyCell(e.currentTarget, descDiv));
 
     // Category assignment section
     const isReviewed = !!job.labelled_at;
@@ -294,21 +291,12 @@ function onCategoryChange(sel, jobId, tr) {
     });
 }
 
-/* ── Copy column ── */
-function copyColumn(which) {
-  const rows = document.querySelectorAll('#jobs-tbody tr.job-row');
-  const parts = [];
-  rows.forEach(tr => {
-    parts.push(which === 'orig'
-      ? (tr.querySelector('.desc-orig')?.innerHTML?.trim() || '')
-      : (tr.querySelector('.desc-clean')?.innerHTML?.trim() || ''));
-  });
-  navigator.clipboard.writeText(parts.join('\n\n---\n\n')).then(() => {
-    const btn = document.querySelector(`button[onclick="copyColumn('${which}')"]`);
-    if (btn) {
-      btn.textContent = '✓ Copied'; btn.classList.add('copied');
-      setTimeout(() => { btn.textContent = '⎘ Copy'; btn.classList.remove('copied'); }, 2000);
-    }
+/* ── Copy single cell ── */
+function copyCell(btn, el) {
+  navigator.clipboard.writeText(el.innerHTML.trim()).then(() => {
+    btn.textContent = '✓ Copied';
+    btn.classList.add('copied');
+    setTimeout(() => { btn.textContent = '⎘ Copy'; btn.classList.remove('copied'); }, 2000);
   });
 }
 
