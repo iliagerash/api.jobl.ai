@@ -76,57 +76,64 @@ def main() -> None:
                 print(f"  [{cat_id:>2}] already at limit ({have}), skipping")
                 continue
 
-            # Fetch candidates — more than needed since some may not map to this category
-            fetch_n = need * 6  # oversampling factor
-            rows = db.execute(
-                text(f"""
-                    SELECT
-                        j.id,
-                        j.title,
-                        j.title_clean,
-                        j.description,
-                        j.company_name,
-                        j.country_code,
-                        j.language_code,
-                        j.category AS original_category,
-                        cm.category_id AS mapped_category_id
-                    FROM jobs j
-                    LEFT JOIN category_map cm
-                        ON LOWER(cm.original_category) = LOWER(j.category)
-                    WHERE j.language_code IN ('en', 'fr')
-                      AND j.title IS NOT NULL
-                      {country_filter}
-                    ORDER BY RANDOM()
-                    LIMIT :limit
-                """),
-                {"limit": fetch_n, **country_params},
-            ).fetchall()
-
+            BATCH = 2000
             inserted = 0
-            for (
-                job_id, title, title_clean, description,
-                company_name, country_code, language_code,
-                original_category, mapped_category_id,
-            ) in rows:
-                if inserted >= need:
-                    break
-                if job_id in already_labelled:
-                    continue
+            seen_ids: set[int] = set()
 
-                effective_title = title_clean or title or ""
-                lang = language_code or "en"
+            while inserted < need:
+                rows = db.execute(
+                    text(f"""
+                        SELECT
+                            j.id,
+                            j.title,
+                            j.title_clean,
+                            j.description,
+                            j.company_name,
+                            j.country_code,
+                            j.language_code,
+                            j.category AS original_category,
+                            cm.category_id AS mapped_category_id
+                        FROM jobs j
+                        LEFT JOIN category_map cm
+                            ON LOWER(cm.original_category) = LOWER(j.category)
+                        WHERE j.language_code IN ('en', 'fr')
+                          AND j.title IS NOT NULL
+                          {country_filter}
+                        ORDER BY RANDOM()
+                        LIMIT :limit
+                    """),
+                    {"limit": BATCH, **country_params},
+                ).fetchall()
 
-                # Determine category_id
-                if mapped_category_id is not None and original_category not in _AMBIGUOUS_CATEGORIES:
-                    assigned_cat = int(mapped_category_id)
-                elif mapped_category_id is not None and original_category in _AMBIGUOUS_CATEGORIES:
-                    h = _assign_category(effective_title, "", lang)
-                    assigned_cat = h if h != 26 else int(mapped_category_id)
-                else:
-                    assigned_cat = _assign_category(effective_title, description or "", lang)
+                if not rows:
+                    break  # DB exhausted
 
-                if assigned_cat != cat_id:
-                    continue
+                batch_inserted = 0
+                for (
+                    job_id, title, title_clean, description,
+                    company_name, country_code, language_code,
+                    original_category, mapped_category_id,
+                ) in rows:
+                    if inserted >= need:
+                        break
+                    if job_id in already_labelled or job_id in seen_ids:
+                        continue
+                    seen_ids.add(job_id)
+
+                    effective_title = title_clean or title or ""
+                    lang = language_code or "en"
+
+                    # Determine category_id
+                    if mapped_category_id is not None and original_category not in _AMBIGUOUS_CATEGORIES:
+                        assigned_cat = int(mapped_category_id)
+                    elif mapped_category_id is not None and original_category in _AMBIGUOUS_CATEGORIES:
+                        h = _assign_category(effective_title, "", lang)
+                        assigned_cat = h if h != 26 else int(mapped_category_id)
+                    else:
+                        assigned_cat = _assign_category(effective_title, description or "", lang)
+
+                    if assigned_cat != cat_id:
+                        continue
 
                 # Clean description
                 clean_result = clean_job_description(description or "")
@@ -168,9 +175,14 @@ def main() -> None:
                     db.commit()
                     already_labelled.add(job_id)
                     inserted += 1
+                    batch_inserted += 1
                 except Exception as exc:
                     db.rollback()
                     print(f"    insert error job_id={job_id}: {exc}")
+
+                if batch_inserted == 0:
+                    # Entire batch yielded no new matches — DB likely exhausted for this class
+                    break
 
             total_inserted += inserted
             print(f"  [{cat_id:>2}] inserted {inserted} (total for class: {have + inserted}/{args.limit})")
