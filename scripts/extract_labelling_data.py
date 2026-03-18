@@ -128,7 +128,7 @@ def main() -> None:
                     continue
 
                 # Clean description
-                clean_result = clean_job_description(description or "", lang=lang)
+                clean_result = clean_job_description(description or "")
                 desc_clean = clean_result.html
                 email = clean_result.email
                 expiry = clean_result.expiry
