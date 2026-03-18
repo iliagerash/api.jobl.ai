@@ -79,8 +79,11 @@ def main() -> None:
             BATCH = 2000
             inserted = 0
             seen_ids: set[int] = set()
+            iteration = 0
 
             while inserted < need:
+                iteration += 1
+                print(f"  [{cat_id:>2}] iteration {iteration}: {inserted}/{need} inserted, scanning batch of {BATCH}...", flush=True)
                 rows = db.execute(
                     text(f"""
                         SELECT
@@ -181,11 +184,11 @@ def main() -> None:
                     print(f"    insert error job_id={job_id}: {exc}")
 
                 if batch_inserted == 0:
-                    # Entire batch yielded no new matches — DB likely exhausted for this class
+                    print(f"  [{cat_id:>2}] no new matches in batch — DB exhausted for this class", flush=True)
                     break
 
             total_inserted += inserted
-            print(f"  [{cat_id:>2}] inserted {inserted} (total for class: {have + inserted}/{args.limit})")
+            print(f"  [{cat_id:>2}] done: {have + inserted}/{args.limit}", flush=True)
 
         print(f"\nDone. Total inserted: {total_inserted}")
     finally:
