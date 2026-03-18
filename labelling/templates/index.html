@@ -293,11 +293,18 @@ function onCategoryChange(sel, jobId, tr) {
 
 /* ── Copy single cell ── */
 function copyCell(btn, el) {
-  navigator.clipboard.writeText(el.innerHTML.trim()).then(() => {
-    btn.textContent = '✓ Copied';
-    btn.classList.add('copied');
-    setTimeout(() => { btn.textContent = '⎘ Copy'; btn.classList.remove('copied'); }, 2000);
-  });
+  const text = el.innerHTML.trim();
+  const ta = document.createElement('textarea');
+  ta.value = text;
+  ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0';
+  document.body.appendChild(ta);
+  ta.focus();
+  ta.select();
+  document.execCommand('copy');
+  document.body.removeChild(ta);
+  btn.textContent = '✓ Copied';
+  btn.classList.add('copied');
+  setTimeout(() => { btn.textContent = '⎘ Copy'; btn.classList.remove('copied'); }, 2000);
 }
 
 function esc(str) {
