@@ -35,6 +35,7 @@
   tr.job-header th { text-align: center; padding: 10px 16px; }
   .job-header-title { font-size: 16px; font-weight: 600; color: #fff; }
   .job-header-meta  { font-size: 12px; color: #8eafc4; margin-top: 3px; }
+  .job-num { float: left; font-size: 12px; color: #4a6070; line-height: 1; padding-top: 2px; min-width: 36px; }
   tr.job-row { border-bottom: 3px solid #2c3e50; }
 
   .cell-inner { padding: 12px; }
@@ -186,7 +187,7 @@ function renderJobs(jobs) {
   const tbody = document.getElementById('jobs-tbody');
   tbody.innerHTML = '';
 
-  jobs.forEach(job => {
+  jobs.forEach((job, idx) => {
     /* ── Full-width subheader row ── */
     const trHeader = document.createElement('tr');
     trHeader.className = 'job-header';
@@ -197,7 +198,7 @@ function renderJobs(jobs) {
       job.country_code   ? esc(job.country_code) : null,
       job.original_category ? esc(job.original_category) : '<span style="opacity:.5">no original category</span>',
     ].filter(Boolean).join(' &nbsp;·&nbsp; ');
-    thHeader.innerHTML = `<div class="job-header-title">${esc(job.title)}</div><div class="job-header-meta">${metaParts}</div>`;
+    thHeader.innerHTML = `<span class="job-num">${idx + 1}</span><div class="job-header-title">${esc(job.title)}</div><div class="job-header-meta">${metaParts}</div>`;
     trHeader.appendChild(thHeader);
 
     const tr = document.createElement('tr');

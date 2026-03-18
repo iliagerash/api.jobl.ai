@@ -673,6 +673,17 @@ def _build_clean_html(raw_html: str) -> str:
     result = re.sub(r"<body[^>]*>|</body>", "", result)
     result = re.sub(r"\n{3,}", "\n\n", result)
     result = re.sub(r"[ \t]+", " ", result)
+    # Ensure a space where a word character is immediately adjacent to an
+    # inline open/close tag boundary (e.g. "right<strong>" → "right <strong>")
+    result = re.sub(r"(\w)(<(?:strong|em|a)(?:\s[^>]*)?>)", r"\1 \2", result)
+    result = re.sub(r"(</(?:strong|em|a)>)(\w)", r"\1 \2", result)
+    # Ensure a space between two adjacent closing/opening inline tags
+    # (e.g. "</strong><strong>" → "</strong> <strong>")
+    result = re.sub(
+        r"(</(?:strong|em|a)>)(<(?:strong|em|a)(?:\s[^>]*)?>)",
+        r"\1 \2",
+        result,
+    )
     return result.strip()
 
 
