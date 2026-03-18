@@ -32,6 +32,9 @@
   th { background: #2c3e50; color: #fff; padding: 8px 12px; text-align: left;
        font-size: 12px; position: relative; }
   td { padding: 0; vertical-align: top; border: 1px solid #e4e8ed; width: 50%; }
+  tr.job-header th { text-align: center; padding: 10px 16px; }
+  .job-header-title { font-size: 16px; font-weight: 600; color: #fff; }
+  .job-header-meta  { font-size: 12px; color: #8eafc4; margin-top: 3px; }
   tr.job-row { border-bottom: 3px solid #2c3e50; }
 
   .cell-inner { padding: 12px; }
@@ -135,11 +138,12 @@ let currentJobs = [];
 function highlightTextNode(node) {
   const text = node.textContent;
   if (!text.trim()) return;
+  // Escape only for safe insertion into innerHTML, then apply highlights
   const safe = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
   const result = safe
     .replace(EMAIL_RE, m => `<span class="hl-email">${m}</span>`)
     .replace(DATE_RE,  m => `<span class="hl-date">${m}</span>`);
-  if (result === safe) return;
+  if (result === safe) return; // no matches — leave text node untouched
   const wrapper = document.createElement('span');
   wrapper.innerHTML = result;
   node.replaceWith(...wrapper.childNodes);
@@ -186,21 +190,26 @@ function renderJobs(jobs) {
   tbody.innerHTML = '';
 
   jobs.forEach(job => {
+    /* ── Full-width subheader row ── */
+    const trHeader = document.createElement('tr');
+    trHeader.className = 'job-header';
+    const thHeader = document.createElement('th');
+    thHeader.colSpan = 2;
+    const metaParts = [
+      job.company_name   ? esc(job.company_name) : null,
+      job.country_code   ? esc(job.country_code) : null,
+      job.original_category ? esc(job.original_category) : '<span style="opacity:.5">no original category</span>',
+    ].filter(Boolean).join(' &nbsp;·&nbsp; ');
+    thHeader.innerHTML = `<div class="job-header-title">${esc(job.title)}</div><div class="job-header-meta">${metaParts}</div>`;
+    trHeader.appendChild(thHeader);
+
     const tr = document.createElement('tr');
     tr.className = 'job-row';
 
     /* ── Left: original description ── */
     const tdOrig = document.createElement('td');
-    const metaHTML = [
-      `<span><strong>${esc(job.title)}</strong></span>`,
-      job.company_name    ? `<span>🏢 ${esc(job.company_name)}</span>` : '',
-      job.country_code    ? `<span>🌍 ${esc(job.country_code)}</span>` : '',
-      job.original_category
-        ? `<span>🏷 ${esc(job.original_category)}</span>`
-        : '<span style="color:#bbb">🏷 no original category</span>',
-    ].join(' ');
-    tdOrig.innerHTML = `<div class="cell-inner"><div class="job-meta">${metaHTML}</div><div class="desc-orig"></div></div>`;
-    tdOrig.querySelector('.desc-orig').textContent = job.description_raw || '';
+    tdOrig.innerHTML = `<div class="cell-inner"><div class="desc-orig"></div></div>`;
+    tdOrig.querySelector('.desc-orig').innerHTML = job.description_raw || '';
     highlightInElement(tdOrig.querySelector('.desc-orig'));
 
     /* ── Right: cleaned description + category ── */
@@ -246,6 +255,7 @@ function renderJobs(jobs) {
 
     tr.appendChild(tdOrig);
     tr.appendChild(tdClean);
+    tbody.appendChild(trHeader);
     tbody.appendChild(tr);
   });
 }
@@ -290,8 +300,8 @@ function copyColumn(which) {
   const parts = [];
   rows.forEach(tr => {
     parts.push(which === 'orig'
-      ? (tr.querySelector('.desc-orig')?.textContent?.trim() || '')
-      : (tr.querySelector('.desc-clean')?.innerText?.trim() || ''));
+      ? (tr.querySelector('.desc-orig')?.innerHTML?.trim() || '')
+      : (tr.querySelector('.desc-clean')?.innerHTML?.trim() || ''));
   });
   navigator.clipboard.writeText(parts.join('\n\n---\n\n')).then(() => {
     const btn = document.querySelector(`button[onclick="copyColumn('${which}')"]`);
