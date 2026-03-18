@@ -126,7 +126,7 @@ def main() -> None:
 
                 while inserted < cap:
                     iteration += 1
-                    print(f"  [{cat_id:>2}] pass {pass_num} ({label}), iter {iteration}: {inserted}/{need} inserted ...", flush=True)
+                    print(f"  [{cat_id:>2}] pass {pass_num} ({label}), iter {iteration}: {inserted}/{cap} (total target: {need}) ...", flush=True)
 
                     rows = db.execute(query, {"limit": BATCH, "cat_id": cat_id, **country_params}).fetchall()
                     if not rows:
