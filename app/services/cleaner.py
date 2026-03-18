@@ -590,8 +590,17 @@ def _wrap_naked_text(soup: BeautifulSoup, body: Tag) -> None:
 
 def _remove_ui_artifacts(body: Tag) -> None:
     for tag in list(body.find_all(["p", "h2", "h3", "h4"])):
-        if _UI_ARTIFACT_RE.match(tag.get_text(strip=True)):
-            tag.decompose()
+        text = tag.get_text(strip=True)
+        if not _UI_ARTIFACT_RE.match(text):
+            continue
+        # Keep generic section headers (Description / Job Description) when the
+        # next sibling is a list — they serve as a real heading in that context.
+        next_el = tag.find_next_sibling()
+        if re.fullmatch(r"(?:job\s+)?description", text, re.IGNORECASE) and (
+            next_el is not None and next_el.name in ("ul", "ol")
+        ):
+            continue
+        tag.decompose()
 
 
 def _drop_empty_blocks(body: Tag) -> None:
