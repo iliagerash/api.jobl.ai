@@ -78,13 +78,14 @@ def main() -> None:
 
             BATCH = 2000
             inserted = 0
-            seen_ids: set[int] = set()
+            # Reserve 20% of slots for heuristic rows so the training set always
+            # includes authentic "no original_category" examples. Unused map slots
+            # roll over to heuristics if category_map can't fill its quota.
+            map_cap = int(need * 0.8)
 
-            # Pass 1: fetch jobs with a direct category_map match for this class.
-            # This is fast and precise — no heuristic filtering needed.
-            # Pass 2: random sampling for heuristic-matched jobs (fallback).
-            for pass_num, query in enumerate([
-                text(f"""
+            passes = [
+                # (label, cap, query)
+                ("category_map", map_cap, text(f"""
                     SELECT j.id, j.title, j.title_clean, j.description,
                            j.company_name, j.country_code, j.language_code,
                            j.category AS original_category,
@@ -99,8 +100,8 @@ def main() -> None:
                       {country_filter}
                     ORDER BY RANDOM()
                     LIMIT :limit
-                """),
-                text(f"""
+                """)),
+                ("heuristics", need, text(f"""
                     SELECT j.id, j.title, j.title_clean, j.description,
                            j.company_name, j.country_code, j.language_code,
                            j.category AS original_category,
@@ -114,18 +115,18 @@ def main() -> None:
                       {country_filter}
                     ORDER BY RANDOM()
                     LIMIT :limit
-                """),
-            ], 1):
+                """)),
+            ]
+
+            for pass_num, (label, cap, query) in enumerate(passes, 1):
                 if inserted >= need:
                     break
-
-                label = "category_map" if pass_num == 1 else "heuristics"
-                seen_ids = set()  # reset per pass
+                seen_ids: set[int] = set()
                 iteration = 0
 
-                while inserted < need:
+                while inserted < cap:
                     iteration += 1
-                    print(f"  [{cat_id:>2}] pass {pass_num} ({label}), iter {iteration}: {inserted}/{need} ...", flush=True)
+                    print(f"  [{cat_id:>2}] pass {pass_num} ({label}), iter {iteration}: {inserted}/{need} inserted ...", flush=True)
 
                     rows = db.execute(query, {"limit": BATCH, "cat_id": cat_id, **country_params}).fetchall()
                     if not rows:
@@ -137,7 +138,7 @@ def main() -> None:
                         company_name, country_code, language_code,
                         original_category, mapped_category_id,
                     ) in rows:
-                        if inserted >= need:
+                        if inserted >= cap:
                             break
                         if job_id in already_labelled or job_id in seen_ids:
                             continue
@@ -146,7 +147,6 @@ def main() -> None:
                         effective_title = title_clean or title or ""
                         lang = language_code or "en"
 
-                        # Determine category_id
                         if mapped_category_id is not None and original_category not in _AMBIGUOUS_CATEGORIES:
                             assigned_cat = int(mapped_category_id)
                         elif mapped_category_id is not None and original_category in _AMBIGUOUS_CATEGORIES:
@@ -158,14 +158,11 @@ def main() -> None:
                         if assigned_cat != cat_id:
                             continue
 
-                        # Clean description
                         clean_result = clean_job_description(description or "")
                         desc_clean = clean_result.html
                         email = _extract_application_email(description or "")
                         expiry = clean_result.expiry
-                        expiry_date = None
-                        if expiry and expiry != "expired":
-                            expiry_date = expiry
+                        expiry_date = expiry if expiry and expiry != "expired" else None
 
                         try:
                             db.execute(
@@ -204,7 +201,7 @@ def main() -> None:
                             print(f"    insert error job_id={job_id}: {exc}")
 
                     if batch_inserted == 0:
-                        print(f"  [{cat_id:>2}] no new matches — moving on", flush=True)
+                        print(f"  [{cat_id:>2}] no new matches in pass {pass_num} ({label})", flush=True)
                         break
 
             total_inserted += inserted

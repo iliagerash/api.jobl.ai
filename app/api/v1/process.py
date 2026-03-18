@@ -148,7 +148,7 @@ def process(body: ProcessRequest, request: Request) -> ProcessResponse:
     if categorizer and categorizer.is_ready():
         try:
             desc_plain = BeautifulSoup(description_clean, "lxml").get_text()
-            cat = categorizer.predict(title_normalized, body.original_category, desc_plain)
+            cat = categorizer.predict(title_normalized, desc_plain)
             category = CategoryOut(id=cat["id"], title=cat["title"])
         except Exception:
             logger.exception("categorizer.predict failed")
