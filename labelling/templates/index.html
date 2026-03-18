@@ -1,0 +1,311 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Job Labelling</title>
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body { font-family: system-ui, sans-serif; font-size: 14px; margin: 0; color: #222; background: #f8f9fa; }
+
+  /* ── Top bar ── */
+  #topbar {
+    position: sticky; top: 0; z-index: 100;
+    background: #1e2938; color: #fff;
+    padding: 10px 20px; display: flex; align-items: center; gap: 16px;
+    box-shadow: 0 2px 6px rgba(0,0,0,.3);
+  }
+  #topbar h1 { font-size: 15px; margin: 0; white-space: nowrap; color: #7a8fa6; }
+  #cat-select {
+    padding: 6px 10px; border-radius: 4px; border: none;
+    font-size: 14px; min-width: 260px; background: #2c3e50; color: #fff; cursor: pointer;
+  }
+  #cat-select option { background: #1e2938; }
+  #job-count      { font-size: 12px; color: #7a8fa6; white-space: nowrap; }
+  #reviewed-count { font-size: 12px; color: #27ae60; white-space: nowrap; }
+
+  /* ── Main content ── */
+  #main { padding: 16px 20px; }
+
+  /* ── Table ── */
+  table { width: 100%; border-collapse: collapse; background: #fff;
+          border-radius: 6px; overflow: hidden; box-shadow: 0 1px 4px rgba(0,0,0,.08); }
+  th { background: #2c3e50; color: #fff; padding: 8px 12px; text-align: left;
+       font-size: 12px; position: relative; }
+  td { padding: 0; vertical-align: top; border: 1px solid #e4e8ed; width: 50%; }
+  tr.job-row { border-bottom: 3px solid #2c3e50; }
+
+  .cell-inner { padding: 12px; }
+
+  .job-meta  { font-size: 11px; color: #666; margin-bottom: 8px; }
+  .job-meta span { margin-right: 10px; }
+  .job-title { font-weight: 600; font-size: 15px; }
+
+  /* Original description — plain text */
+  .desc-orig  { font-size: 12px; line-height: 1.6; word-break: break-word; white-space: pre-wrap; }
+
+  /* Cleaned description — rendered HTML */
+  .desc-clean { font-size: 12px; line-height: 1.6; word-break: break-word; }
+  .desc-clean p   { margin: .3em 0; }
+  .desc-clean h2, .desc-clean h3, .desc-clean h4 { margin: .5em 0 .2em; font-size: 13px; }
+  .desc-clean ul, .desc-clean ol { margin: .3em 0; padding-left: 18px; }
+
+  /* ── Category assignment (below cleaned desc) ── */
+  .label-section { border-top: 1px solid #e4e8ed; margin-top: 12px; padding-top: 10px; }
+  .label-section > label { display: block; font-size: 11px; font-weight: 600; color: #666; margin-bottom: 4px; }
+  .cat-select {
+    width: 100%; padding: 6px 8px; border: 1px solid #ccc; border-radius: 4px;
+    font-size: 13px; background: #fff;
+  }
+  .cat-select.changed { border-color: #27ae60; background: #f0fff4; }
+  .cat-select.saving  { opacity: .6; }
+  .review-badge {
+    display: inline-block; margin-top: 6px; font-size: 11px;
+    padding: 2px 8px; border-radius: 10px; background: #e8f5e9; color: #2e7d32;
+  }
+  .review-badge.auto { background: #fff8e1; color: #f57f17; }
+
+  .extracted { margin-top: 8px; font-size: 12px; }
+  .extracted label { font-weight: 600; color: #555; font-size: 11px; }
+  .ext-val { font-family: monospace; word-break: break-all; }
+
+  /* ── Copy button in header ── */
+  th .copy-btn {
+    position: absolute; right: 8px; top: 50%; transform: translateY(-50%);
+    background: none; border: 1px solid #4a6278; color: #adc5d8; border-radius: 4px;
+    padding: 2px 6px; font-size: 11px; cursor: pointer; line-height: 1.4;
+  }
+  th .copy-btn:hover  { background: #2c3e50; color: #fff; }
+  th .copy-btn.copied { color: #27ae60; border-color: #27ae60; }
+
+  /* ── Highlights ── */
+  .hl-date  { background: #fff3cd; border-radius: 2px; padding: 0 2px; }
+  .hl-email { background: #cfe2ff; border-radius: 2px; padding: 0 2px; }
+
+  /* ── States ── */
+  #loading { text-align: center; padding: 60px; color: #888; font-size: 16px; display: none; }
+  #empty   { text-align: center; padding: 60px; color: #aaa; display: none; }
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <h1>Job Labelling</h1>
+  <select id="cat-select" onchange="loadCategory(parseInt(this.value))">
+    <option value="">— Select a category —</option>
+    {% for cat in categories %}
+    <option value="{{ cat.id }}">{{ cat.title }}</option>
+    {% endfor %}
+  </select>
+  <span id="job-count"></span>
+  <span id="reviewed-count"></span>
+</div>
+
+<div id="main">
+  <div id="loading">Loading…</div>
+  <div id="empty">No jobs found for this category.</div>
+
+  <table id="jobs-table" style="display:none">
+    <thead>
+      <tr>
+        <th>Original description
+          <button class="copy-btn" onclick="copyColumn('orig')">⎘ Copy</button>
+        </th>
+        <th>Cleaned description
+          <button class="copy-btn" onclick="copyColumn('clean')">⎘ Copy</button>
+        </th>
+      </tr>
+    </thead>
+    <tbody id="jobs-tbody"></tbody>
+  </table>
+</div>
+
+<script>
+const ALL_CATEGORIES = {{ all_categories | tojson }};
+
+const DATE_RE  = /\b(?:Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+\d{1,2},?\s+\d{4}|\b\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}\b|\b\d{4}-\d{2}-\d{2}\b|\b\d{1,2}\s+(?:janvier|février|mars|avril|mai|juin|juillet|août|septembre|octobre|novembre|décembre)\s+\d{4}\b/gi;
+const EMAIL_RE = /[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}/g;
+
+const categoryOptionsHTML = ALL_CATEGORIES.map(
+  ([id, title]) => `<option value="${id}">${title}</option>`
+).join('');
+
+let currentJobs = [];
+
+/* ── Highlight text nodes ── */
+function highlightTextNode(node) {
+  const text = node.textContent;
+  if (!text.trim()) return;
+  const safe = text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  const result = safe
+    .replace(EMAIL_RE, m => `<span class="hl-email">${m}</span>`)
+    .replace(DATE_RE,  m => `<span class="hl-date">${m}</span>`);
+  if (result === safe) return;
+  const wrapper = document.createElement('span');
+  wrapper.innerHTML = result;
+  node.replaceWith(...wrapper.childNodes);
+}
+
+function highlightInElement(el) {
+  const walker = document.createTreeWalker(el, NodeFilter.SHOW_TEXT, null);
+  const nodes = [];
+  let n;
+  while ((n = walker.nextNode())) nodes.push(n);
+  nodes.forEach(highlightTextNode);
+}
+
+/* ── Load jobs ── */
+function loadCategory(catId) {
+  if (!catId) return;
+  document.getElementById('loading').style.display = 'block';
+  document.getElementById('jobs-table').style.display = 'none';
+  document.getElementById('empty').style.display = 'none';
+  document.getElementById('jobs-tbody').innerHTML = '';
+  document.getElementById('job-count').textContent = '';
+  document.getElementById('reviewed-count').textContent = '';
+
+  fetch(`/api/jobs/${catId}`)
+    .then(r => r.json())
+    .then(jobs => {
+      currentJobs = jobs;
+      document.getElementById('loading').style.display = 'none';
+      if (!jobs.length) { document.getElementById('empty').style.display = 'block'; return; }
+      const reviewed = jobs.filter(j => j.labelled_at).length;
+      document.getElementById('job-count').textContent = `${jobs.length} jobs`;
+      document.getElementById('reviewed-count').textContent = `✓ ${reviewed} reviewed`;
+      renderJobs(jobs);
+      document.getElementById('jobs-table').style.display = 'table';
+    })
+    .catch(err => {
+      document.getElementById('loading').style.display = 'none';
+      alert('Error loading jobs: ' + err);
+    });
+}
+
+function renderJobs(jobs) {
+  const tbody = document.getElementById('jobs-tbody');
+  tbody.innerHTML = '';
+
+  jobs.forEach(job => {
+    const tr = document.createElement('tr');
+    tr.className = 'job-row';
+
+    /* ── Left: original description ── */
+    const tdOrig = document.createElement('td');
+    const metaHTML = [
+      `<span><strong>${esc(job.title)}</strong></span>`,
+      job.company_name    ? `<span>🏢 ${esc(job.company_name)}</span>` : '',
+      job.country_code    ? `<span>🌍 ${esc(job.country_code)}</span>` : '',
+      job.original_category
+        ? `<span>🏷 ${esc(job.original_category)}</span>`
+        : '<span style="color:#bbb">🏷 no original category</span>',
+    ].join(' ');
+    tdOrig.innerHTML = `<div class="cell-inner"><div class="job-meta">${metaHTML}</div><div class="desc-orig"></div></div>`;
+    tdOrig.querySelector('.desc-orig').textContent = job.description_raw || '';
+    highlightInElement(tdOrig.querySelector('.desc-orig'));
+
+    /* ── Right: cleaned description + category ── */
+    const tdClean = document.createElement('td');
+    const cellDiv = document.createElement('div');
+    cellDiv.className = 'cell-inner';
+
+    // Cleaned description
+    const descDiv = document.createElement('div');
+    descDiv.className = 'desc-clean';
+    descDiv.innerHTML = job.description_clean || '<em style="color:#aaa">No description</em>';
+    cellDiv.appendChild(descDiv);
+    highlightInElement(descDiv);
+
+    // Category assignment section
+    const isReviewed = !!job.labelled_at;
+    const labelSection = document.createElement('div');
+    labelSection.className = 'label-section';
+
+    const emailHTML = job.email
+      ? `<div class="extracted"><label>Email</label><div class="ext-val hl-email">${esc(job.email)}</div></div>`
+      : '';
+    const expiryHTML = job.expiry_date
+      ? `<div class="extracted"><label>Expiry date</label><div class="ext-val hl-date">${esc(job.expiry_date)}</div></div>`
+      : '';
+
+    labelSection.innerHTML = `
+      <label>Category</label>
+      <select class="cat-select" data-id="${job.id}" data-original="${job.category_id}">
+        ${categoryOptionsHTML}
+      </select>
+      <div style="margin-top:6px">
+        <span class="review-badge${isReviewed ? '' : ' auto'}">${isReviewed ? '✓ Reviewed' : 'Auto-assigned'}</span>
+      </div>
+      ${emailHTML}${expiryHTML}`;
+
+    const sel = labelSection.querySelector('select');
+    sel.value = job.category_id;
+    sel.addEventListener('change', () => onCategoryChange(sel, job.id, tr));
+
+    cellDiv.appendChild(labelSection);
+    tdClean.appendChild(cellDiv);
+
+    tr.appendChild(tdOrig);
+    tr.appendChild(tdClean);
+    tbody.appendChild(tr);
+  });
+}
+
+/* ── Save label ── */
+function onCategoryChange(sel, jobId, tr) {
+  const newCatId = parseInt(sel.value, 10);
+  sel.classList.add('saving');
+  sel.disabled = true;
+
+  fetch(`/api/jobs/${jobId}/label`, {
+    method: 'PATCH',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ category_id: newCatId }),
+  })
+    .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+    .then(() => {
+      sel.classList.remove('saving');
+      sel.classList.add('changed');
+      sel.disabled = false;
+      sel.dataset.original = newCatId;
+      const badge = tr.querySelector('.review-badge');
+      if (badge) { badge.className = 'review-badge'; badge.textContent = '✓ Reviewed'; }
+      const job = currentJobs.find(j => j.id === jobId);
+      if (job && !job.labelled_at) {
+        job.labelled_at = new Date().toISOString();
+        const reviewed = currentJobs.filter(j => j.labelled_at).length;
+        document.getElementById('reviewed-count').textContent = `✓ ${reviewed} reviewed`;
+      }
+    })
+    .catch(err => {
+      sel.classList.remove('saving');
+      sel.disabled = false;
+      sel.value = sel.dataset.original;
+      alert('Failed to save: ' + err.message);
+    });
+}
+
+/* ── Copy column ── */
+function copyColumn(which) {
+  const rows = document.querySelectorAll('#jobs-tbody tr.job-row');
+  const parts = [];
+  rows.forEach(tr => {
+    parts.push(which === 'orig'
+      ? (tr.querySelector('.desc-orig')?.textContent?.trim() || '')
+      : (tr.querySelector('.desc-clean')?.innerText?.trim() || ''));
+  });
+  navigator.clipboard.writeText(parts.join('\n\n---\n\n')).then(() => {
+    const btn = document.querySelector(`button[onclick="copyColumn('${which}')"]`);
+    if (btn) {
+      btn.textContent = '✓ Copied'; btn.classList.add('copied');
+      setTimeout(() => { btn.textContent = '⎘ Copy'; btn.classList.remove('copied'); }, 2000);
+    }
+  });
+}
+
+function esc(str) {
+  if (!str) return '';
+  return String(str).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>
