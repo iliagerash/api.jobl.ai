@@ -79,113 +79,133 @@ def main() -> None:
             BATCH = 2000
             inserted = 0
             seen_ids: set[int] = set()
-            iteration = 0
 
-            while inserted < need:
-                iteration += 1
-                print(f"  [{cat_id:>2}] iteration {iteration}: {inserted}/{need} inserted, scanning batch of {BATCH}...", flush=True)
-                rows = db.execute(
-                    text(f"""
-                        SELECT
-                            j.id,
-                            j.title,
-                            j.title_clean,
-                            j.description,
-                            j.company_name,
-                            j.country_code,
-                            j.language_code,
-                            j.category AS original_category,
-                            cm.category_id AS mapped_category_id
-                        FROM jobs j
-                        LEFT JOIN category_map cm
-                            ON LOWER(cm.original_category) = LOWER(j.category)
-                        WHERE j.language_code IN ('en', 'fr')
-                          AND j.title IS NOT NULL
-                          {country_filter}
-                        ORDER BY RANDOM()
-                        LIMIT :limit
-                    """),
-                    {"limit": BATCH, **country_params},
-                ).fetchall()
-
-                if not rows:
-                    break  # DB exhausted
-
-                batch_inserted = 0
-                for (
-                    job_id, title, title_clean, description,
-                    company_name, country_code, language_code,
-                    original_category, mapped_category_id,
-                ) in rows:
-                    if inserted >= need:
-                        break
-                    if job_id in already_labelled or job_id in seen_ids:
-                        continue
-                    seen_ids.add(job_id)
-
-                    effective_title = title_clean or title or ""
-                    lang = language_code or "en"
-
-                    # Determine category_id
-                    if mapped_category_id is not None and original_category not in _AMBIGUOUS_CATEGORIES:
-                        assigned_cat = int(mapped_category_id)
-                    elif mapped_category_id is not None and original_category in _AMBIGUOUS_CATEGORIES:
-                        h = _assign_category(effective_title, "", lang)
-                        assigned_cat = h if h != 26 else int(mapped_category_id)
-                    else:
-                        assigned_cat = _assign_category(effective_title, description or "", lang)
-
-                    if assigned_cat != cat_id:
-                        continue
-
-                # Clean description
-                clean_result = clean_job_description(description or "")
-                desc_clean = clean_result.html
-                email = _extract_application_email(description or "")
-                expiry = clean_result.expiry
-                expiry_date = None
-                if expiry and expiry != "expired":
-                    expiry_date = expiry
-
-                try:
-                    db.execute(
-                        text("""
-                            INSERT INTO job_labelling
-                                (job_id, title, title_clean, description, description_clean,
-                                 company_name, country_code, language_code, original_category,
-                                 email, expiry_date, category_id)
-                            VALUES
-                                (:job_id, :title, :title_clean, :description, :description_clean,
-                                 :company_name, :country_code, :language_code, :original_category,
-                                 :email, :expiry_date, :category_id)
-                            ON CONFLICT (job_id) DO NOTHING
-                        """),
-                        {
-                            "job_id": job_id,
-                            "title": effective_title,
-                            "title_clean": title_clean,
-                            "description": description,
-                            "description_clean": desc_clean,
-                            "company_name": company_name,
-                            "country_code": country_code,
-                            "language_code": language_code,
-                            "original_category": original_category,
-                            "email": email,
-                            "expiry_date": expiry_date,
-                            "category_id": cat_id,
-                        },
-                    )
-                    db.commit()
-                    already_labelled.add(job_id)
-                    inserted += 1
-                    batch_inserted += 1
-                except Exception as exc:
-                    db.rollback()
-                    print(f"    insert error job_id={job_id}: {exc}")
-
-                if batch_inserted == 0:
-                    print(f"  [{cat_id:>2}] no new matches in batch — DB exhausted for this class", flush=True)
+            # Pass 1: fetch jobs with a direct category_map match for this class.
+            # This is fast and precise — no heuristic filtering needed.
+            # Pass 2: random sampling for heuristic-matched jobs (fallback).
+            for pass_num, query in enumerate([
+                text(f"""
+                    SELECT j.id, j.title, j.title_clean, j.description,
+                           j.company_name, j.country_code, j.language_code,
+                           j.category AS original_category,
+                           cm.category_id AS mapped_category_id
+                    FROM jobs j
+                    JOIN category_map cm
+                        ON LOWER(cm.original_category) = LOWER(j.category)
+                    WHERE j.language_code IN ('en', 'fr')
+                      AND j.title IS NOT NULL
+                      AND cm.category_id = :cat_id
+                      AND j.id NOT IN (SELECT job_id FROM job_labelling)
+                      {country_filter}
+                    ORDER BY RANDOM()
+                    LIMIT :limit
+                """),
+                text(f"""
+                    SELECT j.id, j.title, j.title_clean, j.description,
+                           j.company_name, j.country_code, j.language_code,
+                           j.category AS original_category,
+                           cm.category_id AS mapped_category_id
+                    FROM jobs j
+                    LEFT JOIN category_map cm
+                        ON LOWER(cm.original_category) = LOWER(j.category)
+                    WHERE j.language_code IN ('en', 'fr')
+                      AND j.title IS NOT NULL
+                      AND j.id NOT IN (SELECT job_id FROM job_labelling)
+                      {country_filter}
+                    ORDER BY RANDOM()
+                    LIMIT :limit
+                """),
+            ], 1):
+                if inserted >= need:
                     break
+
+                label = "category_map" if pass_num == 1 else "heuristics"
+                seen_ids = set()  # reset per pass
+                iteration = 0
+
+                while inserted < need:
+                    iteration += 1
+                    print(f"  [{cat_id:>2}] pass {pass_num} ({label}), iter {iteration}: {inserted}/{need} ...", flush=True)
+
+                    rows = db.execute(query, {"limit": BATCH, "cat_id": cat_id, **country_params}).fetchall()
+                    if not rows:
+                        break
+
+                    batch_inserted = 0
+                    for (
+                        job_id, title, title_clean, description,
+                        company_name, country_code, language_code,
+                        original_category, mapped_category_id,
+                    ) in rows:
+                        if inserted >= need:
+                            break
+                        if job_id in already_labelled or job_id in seen_ids:
+                            continue
+                        seen_ids.add(job_id)
+
+                        effective_title = title_clean or title or ""
+                        lang = language_code or "en"
+
+                        # Determine category_id
+                        if mapped_category_id is not None and original_category not in _AMBIGUOUS_CATEGORIES:
+                            assigned_cat = int(mapped_category_id)
+                        elif mapped_category_id is not None and original_category in _AMBIGUOUS_CATEGORIES:
+                            h = _assign_category(effective_title, "", lang)
+                            assigned_cat = h if h != 26 else int(mapped_category_id)
+                        else:
+                            assigned_cat = _assign_category(effective_title, description or "", lang)
+
+                        if assigned_cat != cat_id:
+                            continue
+
+                        # Clean description
+                        clean_result = clean_job_description(description or "")
+                        desc_clean = clean_result.html
+                        email = _extract_application_email(description or "")
+                        expiry = clean_result.expiry
+                        expiry_date = None
+                        if expiry and expiry != "expired":
+                            expiry_date = expiry
+
+                        try:
+                            db.execute(
+                                text("""
+                                    INSERT INTO job_labelling
+                                        (job_id, title, title_clean, description, description_clean,
+                                         company_name, country_code, language_code, original_category,
+                                         email, expiry_date, category_id)
+                                    VALUES
+                                        (:job_id, :title, :title_clean, :description, :description_clean,
+                                         :company_name, :country_code, :language_code, :original_category,
+                                         :email, :expiry_date, :category_id)
+                                    ON CONFLICT (job_id) DO NOTHING
+                                """),
+                                {
+                                    "job_id": job_id,
+                                    "title": effective_title,
+                                    "title_clean": title_clean,
+                                    "description": description,
+                                    "description_clean": desc_clean,
+                                    "company_name": company_name,
+                                    "country_code": country_code,
+                                    "language_code": language_code,
+                                    "original_category": original_category,
+                                    "email": email,
+                                    "expiry_date": expiry_date,
+                                    "category_id": cat_id,
+                                },
+                            )
+                            db.commit()
+                            already_labelled.add(job_id)
+                            inserted += 1
+                            batch_inserted += 1
+                        except Exception as exc:
+                            db.rollback()
+                            print(f"    insert error job_id={job_id}: {exc}")
+
+                    if batch_inserted == 0:
+                        print(f"  [{cat_id:>2}] no new matches — moving on", flush=True)
+                        break
 
             total_inserted += inserted
             print(f"  [{cat_id:>2}] done: {have + inserted}/{args.limit}", flush=True)
