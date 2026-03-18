@@ -27,6 +27,23 @@ from sqlalchemy import text
 from app.db.session import SessionLocal
 
 # ---------------------------------------------------------------------------
+# Ambiguous original_category values where the company's industry does not
+# reliably indicate the job role (e.g. EdTech companies labelled "Technology",
+# IT firms labelled "Consulting"). For these, heuristics are tried first and
+# override category_map when a match is found.
+# ---------------------------------------------------------------------------
+_AMBIGUOUS_CATEGORIES: frozenset[str] = frozenset({
+    "Technology",
+    "Technology, Information and Internet",
+    "Technology, Information and Media",
+    "Business Consulting and Services",
+    "Outsourcing/Offshoring",
+    "Outsourcing and Offshoring Consulting",
+    "Operations Consulting",
+    "Internet",
+})
+
+# ---------------------------------------------------------------------------
 # Keyword rules: list of (pattern, category_id, languages) checked in order.
 # languages=None means the rule applies to all languages.
 # First match wins; unmatched rows fall back to 26 (Other).
@@ -216,9 +233,18 @@ def main() -> None:
         for title, title_clean, description, language_code, original_category, mapped_category_id in rows:
             effective_title = title_clean or title or ""
             desc_plain = _strip_html(description or "")
-            if mapped_category_id is not None:
+            if mapped_category_id is not None and original_category not in _AMBIGUOUS_CATEGORIES:
                 category_id = int(mapped_category_id)
                 mapped_count += 1
+            elif mapped_category_id is not None and original_category in _AMBIGUOUS_CATEGORIES:
+                # Let heuristics override for ambiguous company-industry categories
+                heuristic_cat = _assign_category(effective_title, desc_plain, language_code or "en")
+                if heuristic_cat != 26:
+                    category_id = heuristic_cat
+                    heuristic_count += 1
+                else:
+                    category_id = int(mapped_category_id)
+                    mapped_count += 1
             elif args.no_heuristics:
                 continue
             else:

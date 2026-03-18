@@ -136,7 +136,7 @@ def process(body: ProcessRequest, request: Request) -> ProcessResponse:
         expiry_date = clean_result.expiry.isoformat()
 
     # 5. Extract application email and mask it in HTML
-    plain_text = BeautifulSoup(clean_result.html, "lxml").get_text()
+    plain_text = BeautifulSoup(clean_result.html, "lxml").get_text(separator=" ")
     application_email: str | None = _extract_application_email(plain_text)
     description_clean = clean_result.html
     if application_email:
