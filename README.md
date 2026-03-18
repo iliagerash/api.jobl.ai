@@ -19,6 +19,7 @@ Includes a background sync worker that pulls jobs from MySQL source databases in
 - [Running Locally](#running-locally)
 - [Migrations](#migrations)
 - [Categorizer Training](#categorizer-training)
+- [Manual Labelling](#manual-labelling)
 - [Sync Worker](#sync-worker)
 - [Production Deployment](#production-deployment)
 
@@ -80,9 +81,14 @@ api.jobl.ai/
 │   └── language_backfill.py     # jobl-sync-language-backfill entry point
 ├── alembic/
 │   └── versions/                # 18 migrations (linear chain)
+├── labelling/
+│   ├── main.py                    # FastAPI labelling web app (port 80)
+│   └── templates/index.html       # Single-page labelling UI
 ├── scripts/
-│   ├── generate_training_data.py  # Bootstrap categorizer training CSV from DB
-│   └── train_categorizer.py       # Train LightGBM, save .pkl artifact
+│   ├── extract_labelling_data.py      # Populate job_labelling table (balanced per class)
+│   ├── generate_training_data.py      # Bootstrap categorizer training CSV from DB
+│   ├── generate_training_data_labelled.py  # Training CSV from manually reviewed job_labelling
+│   └── train_categorizer.py           # Train LightGBM, save .pkl artifact
 ├── sql/
 │   ├── seed_categories.sql      # 26 category rows
 │   ├── seed_countries.sql
@@ -476,6 +482,56 @@ Results (100 jobs)
   Avg latency:   138ms
 ─────────────────────────────────────
 ```
+
+---
+
+## Manual Labelling
+
+For higher-quality training data, jobs can be manually reviewed and corrected via a web UI. Labels are stored in the `job_labelling` table and exported with `generate_training_data_labelled.py`.
+
+### 1. Populate the labelling table
+
+Extracts a balanced sample of jobs (up to `--limit` per category, classes 1–25), cleans descriptions, and auto-assigns categories via `category_map` or heuristics:
+
+```bash
+python scripts/extract_labelling_data.py --limit 200 --countries=us,ca
+```
+
+Output per class:
+```
+  [ 4] inserted 198 (total for class: 198/200)
+  [ 8] inserted 200 (total for class: 200/200)
+  ...
+Done. Total inserted: 4712
+```
+
+Re-running is safe — already-present jobs are skipped. To top up a class, run again; only the deficit is filled.
+
+### 2. Review in the labelling UI
+
+```bash
+sudo python labelling/main.py
+```
+
+Opens at `http://<host>/`. Features:
+- Category dropdown in the top bar — jobs load dynamically per category
+- Two-column table: original description (left) | cleaned description + category assignment (right)
+- Dates highlighted in yellow, emails in blue in both columns
+- Category dropdown per job — change saves instantly via Ajax, no submit button
+- Auto-assigned / Reviewed badge tracks review status
+- **⎘ Copy** button in each column header copies all visible descriptions (separated by `---`) to clipboard
+
+### 3. Export training data
+
+```bash
+# All rows (auto-assigned + manually reviewed)
+python scripts/generate_training_data_labelled.py --output data/
+
+# Manually reviewed rows only
+python scripts/generate_training_data_labelled.py --output data/ --reviewed-only
+```
+
+Outputs `data/categorizer_training.csv` in the same format as `generate_training_data.py`. Train the model with `train_categorizer.py` as usual.
 
 ---
 
