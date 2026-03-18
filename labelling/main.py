@@ -107,7 +107,7 @@ async def get_jobs(category_id: int) -> list[dict[str, Any]]:
             text("""
                 SELECT id, title, description, description_clean, company_name,
                        country_code, original_category, email,
-                       expiry_date, category_id, labelled_at
+                       expiry_date, category_id, labelled_at, verified
                 FROM job_labelling
                 WHERE category_id = :cat_id
                 ORDER BY labelled_at NULLS FIRST, id
@@ -130,6 +130,7 @@ async def get_jobs(category_id: int) -> list[dict[str, Any]]:
             "expiry_date": str(r[8]) if r[8] else None,
             "category_id": r[9],
             "labelled_at": r[10].isoformat() if r[10] else None,
+            "verified": bool(r[11]),
         }
         for r in rows
     ]
@@ -167,6 +168,32 @@ async def update_label(job_labelling_id: int, body: LabelUpdate) -> dict[str, An
         raise HTTPException(status_code=404, detail="Job labelling entry not found")
 
     return {"id": result[0], "category_id": result[1]}
+
+
+@app.patch("/api/jobs/{job_labelling_id}/verify")
+async def toggle_verify(job_labelling_id: int) -> dict[str, Any]:
+    db = SessionLocal()
+    try:
+        result = db.execute(
+            text("""
+                UPDATE job_labelling
+                SET verified = NOT verified
+                WHERE id = :id
+                RETURNING id, verified
+            """),
+            {"id": job_labelling_id},
+        ).fetchone()
+        db.commit()
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(exc))
+    finally:
+        db.close()
+
+    if result is None:
+        raise HTTPException(status_code=404, detail="Job labelling entry not found")
+
+    return {"id": result[0], "verified": result[1]}
 
 
 if __name__ == "__main__":

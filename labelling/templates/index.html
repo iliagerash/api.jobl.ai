@@ -71,14 +71,21 @@
   .extracted label { font-weight: 600; color: #555; font-size: 11px; }
   .ext-val { font-family: monospace; word-break: break-all; }
 
-  /* ── Copy button inside cell ── */
+  /* ── Copy / Verify buttons inside cell ── */
+  .cell-copy-btn, .cell-verify-btn {
+    float: right; margin: 0 0 6px 6px;
+    border-radius: 4px; padding: 2px 7px; font-size: 11px; cursor: pointer; line-height: 1.4;
+  }
   .cell-copy-btn {
-    float: right; margin: 0 0 6px 8px;
-    background: none; border: 1px solid #ccc; color: #888; border-radius: 4px;
-    padding: 2px 7px; font-size: 11px; cursor: pointer; line-height: 1.4;
+    background: none; border: 1px solid #ccc; color: #888;
   }
   .cell-copy-btn:hover  { background: #f0f0f0; color: #333; }
   .cell-copy-btn.copied { color: #27ae60; border-color: #27ae60; }
+  .cell-verify-btn {
+    background: none; border: 1px solid #ccc; color: #888;
+  }
+  .cell-verify-btn:hover    { background: #f0f0f0; color: #333; }
+  .cell-verify-btn.verified { background: #fff8e1; border-color: #f9a825; color: #e65100; }
 
   /* ── Highlights ── */
   .hl-date  { background: #fff3cd; border-radius: 2px; padding: 0 2px; }
@@ -208,6 +215,13 @@ function renderJobs(jobs) {
     const cellDiv = document.createElement('div');
     cellDiv.className = 'cell-inner';
 
+    // Verify button
+    const verifyBtn = document.createElement('button');
+    verifyBtn.className = 'cell-verify-btn' + (job.verified ? ' verified' : '');
+    verifyBtn.textContent = job.verified ? '⏳ Pending' : 'Verify';
+    verifyBtn.addEventListener('click', () => onVerify(verifyBtn, job.id));
+    cellDiv.appendChild(verifyBtn);
+
     // Copy button + cleaned description
     const cleanCopyBtn = document.createElement('button');
     cleanCopyBtn.className = 'cell-copy-btn';
@@ -288,6 +302,29 @@ function onCategoryChange(sel, jobId, tr) {
       sel.disabled = false;
       sel.value = sel.dataset.original;
       alert('Failed to save: ' + err.message);
+    });
+}
+
+/* ── Verify ── */
+function onVerify(btn, jobId) {
+  btn.disabled = true;
+  fetch(`/api/jobs/${jobId}/verify`, { method: 'PATCH' })
+    .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
+    .then(data => {
+      btn.disabled = false;
+      if (data.verified) {
+        btn.className = 'cell-verify-btn verified';
+        btn.textContent = '⏳ Pending';
+      } else {
+        btn.className = 'cell-verify-btn';
+        btn.textContent = 'Verify';
+      }
+      const job = currentJobs.find(j => j.id === jobId);
+      if (job) job.verified = data.verified;
+    })
+    .catch(err => {
+      btn.disabled = false;
+      alert('Failed to verify: ' + err.message);
     });
 }
 

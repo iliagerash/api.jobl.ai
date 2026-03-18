@@ -282,9 +282,11 @@ def _is_section_header(text: str) -> bool:
     text = text.strip().rstrip(":")
     if not text or len(text) < 2 or len(text) > 80:
         return False
-    if len(text.split()) > 9:
+    if len(text.split()) > 7:
         return False
     if text.endswith((".", "?", "!")):
+        return False
+    if "@" in text:  # email addresses are not section headers
         return False
     return True
 
@@ -376,6 +378,10 @@ def _promote_standalone_bold(soup: BeautifulSoup, body: Tag) -> None:
             continue
         parent = tag.parent
         if parent is None:
+            continue
+        # Don't promote when parent is an inline element (e.g. <a>) — the
+        # strong is part of inline content, not a standalone section header.
+        if parent.name in ("a", "em", "strong", "b", "span"):
             continue
         if parent.get_text(strip=True) == text and _is_section_header(text):
             h3 = soup.new_tag("h3")
