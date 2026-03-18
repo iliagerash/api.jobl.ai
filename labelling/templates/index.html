@@ -215,18 +215,18 @@ function renderJobs(jobs) {
     const cellDiv = document.createElement('div');
     cellDiv.className = 'cell-inner';
 
-    // Verify button
-    const verifyBtn = document.createElement('button');
-    verifyBtn.className = 'cell-verify-btn' + (job.verified ? ' verified' : '');
-    verifyBtn.textContent = job.verified ? '⏳ Pending' : 'Verify';
-    verifyBtn.addEventListener('click', () => onVerify(verifyBtn, job.id));
-    cellDiv.appendChild(verifyBtn);
-
     // Copy button + cleaned description
     const cleanCopyBtn = document.createElement('button');
     cleanCopyBtn.className = 'cell-copy-btn';
     cleanCopyBtn.textContent = '⎘ Copy';
     cellDiv.appendChild(cleanCopyBtn);
+
+    // Verify button (left of Copy)
+    const verifyBtn = document.createElement('button');
+    verifyBtn.className = 'cell-verify-btn' + (job.verified ? ' verified' : '');
+    verifyBtn.textContent = job.verified ? '⏳ Pending' : 'Verify';
+    verifyBtn.addEventListener('click', () => onVerify(verifyBtn, job.id));
+    cellDiv.appendChild(verifyBtn);
 
     const descDiv = document.createElement('div');
     descDiv.className = 'desc-clean';
