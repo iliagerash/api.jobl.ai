@@ -2,11 +2,38 @@ import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request
+from starlette.responses import Response
 
 from app.api.router import api_router
 from app.core.config import settings
 
 logger = logging.getLogger("jobl.api")
+
+_ALLOWED_IPS: frozenset[str] | None = (
+    frozenset(ip.strip() for ip in settings.allowed_ips.split(",") if ip.strip())
+    if settings.allowed_ips
+    else None
+)
+
+
+class IPAllowlistMiddleware(BaseHTTPMiddleware):
+    """Return 403 for any request whose source IP is not in ALLOWED_IPS.
+
+    Checks both the direct client IP and the first hop in X-Forwarded-For
+    (set by reverse proxies such as nginx). When ALLOWED_IPS is unset the
+    middleware is a no-op.
+    """
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        if _ALLOWED_IPS is not None:
+            client_ip = request.client.host if request.client else ""
+            forwarded = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+            if client_ip not in _ALLOWED_IPS and forwarded not in _ALLOWED_IPS:
+                logger.warning("Blocked request from %s (forwarded: %r)", client_ip, forwarded)
+                return Response("Forbidden", status_code=403)
+        return await call_next(request)
 
 
 @asynccontextmanager
@@ -39,4 +66,6 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title=settings.app_name, version=settings.app_version, lifespan=lifespan)
+if _ALLOWED_IPS is not None:
+    app.add_middleware(IPAllowlistMiddleware)
 app.include_router(api_router, prefix=settings.api_prefix)

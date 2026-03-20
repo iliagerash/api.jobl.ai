@@ -22,9 +22,9 @@ class Settings(BaseSettings):
     # Categorizer (LightGBM — optional, category field is null if absent)
     categorizer_model_path: str | None = None
 
-    # Comma-separated list of IPs allowed to call /process.
+    # Comma-separated list of IPs allowed to reach any endpoint.
     # Leave unset (or empty) to allow all IPs.
-    process_allowed_ips: str | None = None
+    allowed_ips: str | None = None
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
