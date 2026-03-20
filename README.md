@@ -82,7 +82,7 @@ api.jobl.ai/
 ├── alembic/
 │   └── versions/                # 18 migrations (linear chain)
 ├── labelling/
-│   ├── main.py                    # FastAPI labelling web app (port 80)
+│   ├── main.py                    # FastAPI labelling web app (port 8002)
 │   └── templates/index.html       # Single-page labelling UI
 ├── scripts/
 │   ├── extract_labelling_data.py      # Populate job_labelling table (balanced per class)
@@ -513,7 +513,7 @@ Re-running is safe — already-present jobs are skipped. To top up a class, run 
 sudo .venv/bin/python labelling/main.py
 ```
 
-Opens at `http://<host>/`. Features:
+Opens at `http://<host>:8002/`. Features:
 - Category dropdown in the top bar — jobs load dynamically per category
 - Two-column table: original description (left) | cleaned description + category assignment (right)
 - Dates highlighted in yellow, emails in blue in both columns

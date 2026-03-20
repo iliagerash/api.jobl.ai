@@ -198,4 +198,4 @@ async def toggle_verify(job_labelling_id: int) -> dict[str, Any]:
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("labelling.main:app", host="0.0.0.0", port=80, reload=True)
+    uvicorn.run("labelling.main:app", host="0.0.0.0", port=8002, reload=True)
