@@ -94,24 +94,46 @@ _FR_MONTHS: dict[str, int] = {
     "septembre": 9, "octobre": 10, "novembre": 11, "décembre": 12,
 }
 
+# English month names (full + abbreviated) for Day-Month-Year parsing
+_EN_MONTHS: dict[str, int] = {
+    "january": 1, "jan": 1,
+    "february": 2, "feb": 2,
+    "march": 3, "mar": 3,
+    "april": 4, "apr": 4,
+    "may": 5,
+    "june": 6, "jun": 6,
+    "july": 7, "jul": 7,
+    "august": 8, "aug": 8,
+    "september": 9, "sep": 9, "sept": 9,
+    "october": 10, "oct": 10,
+    "november": 11, "nov": 11,
+    "december": 12, "dec": 12,
+}
+
 # Patterns that introduce a deadline field label (EN + FR, expanded)
 _DEADLINE_LABEL_RE = re.compile(
     r"""
     (?:
         application\s+deadline
       | unposting\s+date
-      | closing\s+date
+      | (?:job\s+)?posting\s+down\s+date
+      | closing\s+(?:date|on)
       | close\s+date
       | deadline
       | position\s+closes
-      | apply\s+before
-      | posting\s+closes
+      | apply\s+(?:by\s+date|before)
+      | posting\s+(?:closes|end\s+date)
+      | job\s+posting\s+end\s+date
       | applications?\s+close
       | applications?\s+due
       | expiry\s+date
+      | application\s+window\b.{0,60}close\s+on
+      | (?:position|job|work)\s+start\s+date
+      | (?:hired|offered)\b.{0,120}(?:between|from)\b.{0,120}\band\b
       | open\s+until
       | date\s+limite\s+(?:pour\s+)?(?:postuler|de\s+candidature)?
       | date\s+de\s+(?:cl[oô]ture|fermeture)
+      | date\s+d[''\u2019]affichage\b
       | avant\s+le
       | candidatures?\s+re[cç]ues?\s+jusqu(?:[''\u2019]|\s+)au
       | fermeture\s+du\s+concours
@@ -127,6 +149,23 @@ _INLINE_APPLY_BY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Inline prose: "submit a résumé by Wednesday, March 18, 2026"
+# Note: (.*) — may capture only a weekday ("Wednesday,") when the date is in
+# the next text node (span), or be empty when entirely in the next node.
+_INLINE_RESUME_BY_RE = re.compile(
+    r"r[eé]sum[eé]s?\s+by\s*(.*)",
+    re.IGNORECASE,
+)
+
+# Inline prose: "posting will close at 11:59 pm MST on March 16, 2026"
+#               "job posting will close on April 30, 2026"
+#               "this position closes on 2026-03-31"
+# Note: (.*)  — may be empty when the date falls in the next text node (span).
+_INLINE_CLOSE_ON_RE = re.compile(
+    r"(?:(?:job|this)\s+)?(?:posting|position)\s+(?:will\s+)?close[sd]?\b.{0,60}?\bon\b\s*(.*)",
+    re.IGNORECASE,
+)
+
 # Open-ended values — no expiry implied
 _OPEN_ENDED_RE = re.compile(r"^\s*(ongoing|until\s+filled|open)\s*$", re.IGNORECASE)
 
@@ -136,38 +175,53 @@ _EN_DATE_RE = re.compile(r"([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})")
 _FR_DATE_RE = re.compile(r"(\d{1,2})\s+([a-zéûôàî]+)\s+(\d{4})", re.IGNORECASE)
 
 
-def _parse_date(text: str) -> date | None:
-    """Parse a date string. Returns None if unparseable or open-ended."""
+def _parse_date(text: str, mm_dd_first: bool = False) -> date | None:
+    """Parse a date string. Returns None if unparseable or open-ended.
+
+    mm_dd_first: when True, try MM/DD before DD/MM for ambiguous numeric dates.
+    """
     text = text.strip()
     if not text or _OPEN_ENDED_RE.match(text):
         return None
 
     # Numeric YYYY-MM-DD
-    m = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", text)
+    m = re.search(r"(\d{4})-(\d{2})-(\d{2})", text)
     if m:
         try:
             return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
         except ValueError:
             pass
 
-    # Numeric DD/MM/YYYY or DD-MM-YYYY
-    m = re.match(r"^(\d{1,2})[/\-](\d{2})[/\-](\d{4})$", text)
+    # Numeric DD/MM/YYYY or MM/DD/YYYY or DD-MM-YYYY
+    m = re.search(r"(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})", text)
     if m:
-        try:
-            return date(int(m.group(3)), int(m.group(2)), int(m.group(1)))
-        except ValueError:
-            pass
+        a, b, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        # Order of tries depends on detected format: MM/DD (a=month, b=day) or DD/MM
+        pairs = [(a, b), (b, a)] if mm_dd_first else [(b, a), (a, b)]
+        for month, day in pairs:
+            try:
+                return date(year, month, day)
+            except ValueError:
+                pass
 
     # French first (prevents EN parser from misreading "2 avril 2026")
     m = _FR_DATE_RE.search(text)
     if m:
         day = int(m.group(1))
-        month = _FR_MONTHS.get(m.group(2).lower())
+        month_str = m.group(2).lower()
         year = int(m.group(3))
+        month = _FR_MONTHS.get(month_str) or _EN_MONTHS.get(month_str)
         if month:
             try:
                 return date(year, month, day)
             except ValueError:
+                pass
+        else:
+            # Unknown month name — try dateutil as last resort
+            try:
+                from dateutil import parser as du
+                return du.parse(m.group(0), dayfirst=True).date()
+            except Exception:
                 pass
 
     # English via dateutil
@@ -182,11 +236,32 @@ def _parse_date(text: str) -> date | None:
     return None
 
 
+_NUMERIC_DATE_RE = re.compile(r"(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})")
+
+
+def _detect_mm_dd(text: str) -> bool:
+    """Return True if unambiguous numeric dates in text use MM/DD format.
+
+    Scans for dates where the first component (a) exceeds 12 (→ must be a day,
+    so format is DD/MM — return False) or the second component (b) exceeds 12
+    (→ must be a day, so format is MM/DD — return True).  Returns False (DD/MM
+    default) when no unambiguous signal is found.
+    """
+    for m in _NUMERIC_DATE_RE.finditer(text):
+        a, b = int(m.group(1)), int(m.group(2))
+        if b > 12:
+            return True   # second component can't be month → MM/DD
+        if a > 12:
+            return False  # first component can't be month → DD/MM
+    return False  # no signal: default to DD/MM
+
+
 def _extract_expiry_from_text(full_text: str) -> date | None:
     """Scan plain text for deadline patterns, return first parseable date.
 
     Returns None for open-ended postings ("Ongoing") and for no match.
     """
+    mm_dd = _detect_mm_dd(full_text)
     lines = [l.strip() for l in full_text.splitlines() if l.strip()]
 
     for i, line in enumerate(lines):
@@ -197,23 +272,51 @@ def _extract_expiry_from_text(full_text: str) -> date | None:
             if after:
                 if _OPEN_ENDED_RE.match(after):
                     return None
-                d = _parse_date(after)
+                d = _parse_date(after, mm_dd)
                 if d is not None:
                     return d
             if i + 1 < len(lines):
                 nxt = lines[i + 1]
                 if _OPEN_ENDED_RE.match(nxt):
                     return None
-                d = _parse_date(nxt)
+                d = _parse_date(nxt, mm_dd)
                 if d is not None:
                     return d
+                # Date may span two lines, e.g. "Friday," + "March 6, 2026"
+                if i + 2 < len(lines):
+                    d = _parse_date(nxt + " " + lines[i + 2], mm_dd)
+                    if d is not None:
+                        return d
 
         # Inline prose: "apply by April 1, 2026"
         m2 = _INLINE_APPLY_BY_RE.search(line)
         if m2:
-            d = _parse_date(m2.group(1))
+            d = _parse_date(m2.group(1), mm_dd)
             if d is not None:
                 return d
+
+        # Inline: "submit a résumé by Wednesday, March 18, 2026"
+        m_res = _INLINE_RESUME_BY_RE.search(line)
+        if m_res:
+            captured = m_res.group(1).strip()
+            d = _parse_date(captured, mm_dd) if captured else None
+            if d is None and i + 1 < len(lines):
+                # Date may follow on the next line (span split), possibly after a weekday
+                d = _parse_date(captured + " " + lines[i + 1], mm_dd) or _parse_date(lines[i + 1], mm_dd)
+            if d is not None:
+                return d
+
+        # Inline prose: "posting will close at 11:59 pm MST on March 16, 2026"
+        m3 = _INLINE_CLOSE_ON_RE.search(line)
+        if m3:
+            captured = m3.group(1).strip()
+            # Date may be in the next text node (span → separate line)
+            if not captured and i + 1 < len(lines):
+                captured = lines[i + 1]
+            if captured:
+                d = _parse_date(captured, mm_dd)
+                if d is not None:
+                    return d
 
     return None
 
@@ -241,6 +344,17 @@ def extract_expiry(raw_html: str) -> date | Literal["expired"] | None:
     if found is None:
         return None
     return found if found >= date.today() else "expired"
+
+
+def extract_expiry_raw(raw_html: str) -> date | None:
+    """Like extract_expiry but returns the date even if it has already passed.
+
+    Used for labelling/training data extraction where past deadlines are still
+    informative for the reviewer.
+    """
+    soup = BeautifulSoup(raw_html, "lxml")
+    text = soup.get_text(separator="\n")
+    return _extract_expiry_from_text(text)
 
 
 # ---------------------------------------------------------------------------
@@ -311,7 +425,7 @@ def _split_bold_on_br(body: Tag, soup: BeautifulSoup) -> None:
     Trailing <br> (empty last segment) are not emitted, so <strong>Header<br></strong>
     becomes just <strong>Header</strong> and the header-promotion logic is unaffected.
     """
-    for tag in list(body.find_all(["strong", "b"])):
+    for tag in list(body.find_all(["strong", "b", "em"])):
         if not tag.find("br"):
             continue
         tag_name = tag.name
@@ -387,6 +501,37 @@ def _promote_standalone_bold(soup: BeautifulSoup, body: Tag) -> None:
             h3 = soup.new_tag("h3")
             h3.string = text.rstrip(":").strip()
             parent.replace_with(h3)
+
+
+def _wrap_orphan_lis(body: Tag, soup: BeautifulSoup) -> None:
+    """Wrap <li> elements that are direct body children in a <ul>.
+
+    lxml's HTML parser sometimes places bare <li> tags (without a parent
+    <ul>/<ol> in the source) as direct body children rather than creating an
+    implicit list. _split_on_brs then puts them in its flush bucket, which
+    wraps them in <p>; lxml rejects <li> inside <p>, so the content is lost.
+    Running this step first ensures they are inside a <ul> before _collapse_brs.
+    """
+    while True:
+        # Find the first direct-child <li>; process one group per iteration.
+        first = next(
+            (c for c in body.children if isinstance(c, Tag) and c.name == "li"),
+            None,
+        )
+        if first is None:
+            break
+        ul = soup.new_tag("ul")
+        first.insert_before(ul)
+        # Absorb all consecutive <li> siblings into the new <ul>
+        node = first
+        while node and isinstance(node, Tag) and node.name == "li":
+            nxt = node.next_sibling
+            node.extract()
+            ul.append(node)
+            # Skip whitespace-only text nodes between <li> elements
+            while nxt and isinstance(nxt, NavigableString) and not nxt.strip():
+                nxt = nxt.next_sibling
+            node = nxt if (isinstance(nxt, Tag) and nxt.name == "li") else None
 
 
 def _split_on_brs(container: Tag, soup: BeautifulSoup) -> None:
@@ -499,6 +644,59 @@ def _split_p_on_blank_lines(body: Tag, soup: BeautifulSoup) -> None:
                 new_paras[i - 1].insert_after(np_)
 
 
+# Unicode characters used as bullet separators in Word/ATS-exported HTML
+_ANY_BULLET_RE = re.compile(r"[•◦◆▪▸▶✓✔●○■□▫▹]")
+_BULLET_SPLIT_RE = re.compile(r"\s*[•◦◆▪▸▶✓✔●○■□▫▹]\s*")
+
+
+def _convert_bullet_chars_to_list(body: Tag, soup: BeautifulSoup) -> None:
+    """Convert <p> elements that use Unicode bullet chars as item separators into <ul><li>.
+
+    Handles job descriptions exported from Word/ATS systems where items are
+    separated by characters like • ◦ ▪ instead of proper <ul><li> markup.
+    Requires at least 2 bullet characters in the paragraph to trigger conversion.
+    If the first segment is ALL-CAPS (≥2 words) it is promoted to <h3>.
+    """
+    for p in list(body.find_all("p")):
+        inner_html = "".join(str(c) for c in p.children)
+        if len(_ANY_BULLET_RE.findall(inner_html)) < 2:
+            continue
+
+        parts = [pt.strip() for pt in _BULLET_SPLIT_RE.split(inner_html) if pt.strip()]
+        if len(parts) < 2:
+            continue
+
+        replacements: list[Tag] = []
+
+        # Hoist an ALL-CAPS first segment as a heading
+        first_text = BeautifulSoup(f"<span>{parts[0]}</span>", "lxml").get_text(strip=True)
+        stripped = first_text.strip()
+        is_caps_header = (
+            len(stripped.split()) >= 2
+            and stripped == stripped.upper()
+            and stripped.replace(" ", "").isalpha()
+        )
+        list_parts = parts[1:] if is_caps_header else parts
+        if is_caps_header:
+            h3 = soup.new_tag("h3")
+            h3.string = stripped
+            replacements.append(h3)
+
+        if list_parts:
+            ul = soup.new_tag("ul")
+            for part in list_parts:
+                li_soup = BeautifulSoup(f"<li>{part}</li>", "lxml").find("li")
+                if li_soup and li_soup.get_text(strip=True):
+                    ul.append(li_soup)
+            if ul.find("li"):
+                replacements.append(ul)
+
+        if replacements:
+            p.replace_with(replacements[0])
+            for i, repl in enumerate(replacements[1:], 1):
+                replacements[i - 1].insert_after(repl)
+
+
 def _normalize_inline_whitespace(body: Tag) -> None:
     """Collapse whitespace within text nodes inside <p> and <li> elements.
 
@@ -594,6 +792,123 @@ def _wrap_naked_text(soup: BeautifulSoup, body: Tag) -> None:
             p.string = child.strip()
 
 
+def _hoist_h3_from_li(soup: BeautifulSoup, body: Tag) -> None:
+    """Restructure lists where <h3> elements are used as section dividers inside <li>.
+
+    Handles the Canadian Job Bank pattern:
+      <ul>
+        <li><h3>Tasks</h3></li>
+        <li>Do thing A</li>
+        <li>Do thing B</li>
+        <li><h3>Requirements</h3></li>
+        <li>Requirement 1</li>
+      </ul>
+
+    Transforms into:
+      <h3>Tasks</h3>
+      <ul><li>Do thing A</li><li>Do thing B</li></ul>
+      <h3>Requirements</h3>
+      <ul><li>Requirement 1</li></ul>
+
+    Label-only <li> items (text ending with ":" and at most 3 words) are dropped.
+    """
+    for lst in list(body.find_all(["ul", "ol"])):
+        children = list(lst.find_all("li", recursive=False))
+        # Only process lists that contain at least one <li><h3>...</h3></li>
+        if not any(
+            li.find("h3", recursive=False)
+            or (li.find("h3") and li.get_text(strip=True) == (li.find("h3") or li).get_text(strip=True))
+            for li in children
+        ):
+            continue
+
+        groups: list[tuple] = []  # (h3_tag | None, [li_tags])
+        current_h3 = None
+        current_items: list = []
+
+        for li in children:
+            h3 = li.find("h3")
+            if h3 and li.get_text(strip=True) == h3.get_text(strip=True):
+                # li is purely a section header
+                groups.append((current_h3, current_items))
+                current_h3 = soup.new_tag("h3")
+                current_h3.string = h3.get_text(strip=True)
+                current_items = []
+            else:
+                text = li.get_text(strip=True)
+                # Drop label-only items like "Education:" or "Expérience:"
+                if text.endswith(":") and len(text.split()) <= 4:
+                    continue
+                current_items.append(li)
+
+        groups.append((current_h3, current_items))
+
+        new_nodes: list = []
+        for h3_tag, items in groups:
+            if h3_tag is not None:
+                new_nodes.append(h3_tag)
+            if items:
+                new_ul = soup.new_tag(lst.name)
+                for item in items:
+                    item.extract()
+                    new_ul.append(item)
+                new_nodes.append(new_ul)
+
+        if not new_nodes:
+            lst.decompose()
+            continue
+
+        lst.replace_with(new_nodes[0])
+        for i, node in enumerate(new_nodes[1:], 1):
+            new_nodes[i - 1].insert_after(node)
+
+
+def _dedup_consecutive_h3(body: Tag) -> None:
+    """Remove an <h3> that is immediately followed by another <h3>.
+
+    Job boards (Workday, Lever, etc.) wrap sections in a category <h3>
+    ("Company Description", "Qualifications") immediately before the real
+    section <h3>. The category header adds no value once we have the
+    specific title that follows it.
+    """
+    for h3 in list(body.find_all("h3")):
+        next_el = h3.find_next_sibling()
+        if next_el and next_el.name == "h3":
+            h3.decompose()
+
+
+def _drop_label_before_heading(body: Tag) -> None:
+    """Remove a plain-text <p> ending in ':' when immediately followed by <h3>.
+
+    Handles the pattern:
+      <p>Main Responsibilities:</p>
+      <h3>Responsibilities</h3>
+      <ul>...</ul>
+    The paragraph is a redundant category label; the heading is the real title.
+    Only drops paragraphs with no child elements (pure text or a single inline).
+    """
+    for p in list(body.find_all("p")):
+        text = p.get_text(strip=True)
+        if not text.endswith(":"):
+            continue
+        # Only plain-text or single-strong paragraphs (not rich content)
+        if len(list(p.children)) > 2:
+            continue
+        next_el = p.find_next_sibling()
+        if next_el and next_el.name == "h3":
+            p.decompose()
+
+
+def _remove_nav_lists(body: Tag) -> None:
+    """Drop <ul>/<ol> lists that are entirely composed of UI navigation items."""
+    for lst in list(body.find_all(["ul", "ol"])):
+        items = lst.find_all("li", recursive=False)
+        if not items:
+            continue
+        if all(_UI_ARTIFACT_RE.match(li.get_text(strip=True)) for li in items):
+            lst.decompose()
+
+
 def _remove_ui_artifacts(body: Tag) -> None:
     for tag in list(body.find_all(["p", "h2", "h3", "h4"])):
         text = tag.get_text(strip=True)
@@ -611,7 +926,14 @@ def _remove_ui_artifacts(body: Tag) -> None:
 
 def _drop_empty_blocks(body: Tag) -> None:
     for tag in body.find_all(["p", "li", "h2", "h3", "h4"]):
-        if not tag.get_text(strip=True):
+        text = tag.get_text(strip=True)
+        if not text:
+            tag.decompose()
+        elif re.fullmatch(r"[\w\s/\-]+:\s*", text):
+            # Label with no value, e.g. "Position Title: " left after placeholder removal
+            tag.decompose()
+        elif tag.name == "p" and re.fullmatch(r"\d{1,4}", text):
+            # Lone number, e.g. "09" orphaned after a Grade Level heading is removed
             tag.decompose()
 
 
@@ -630,11 +952,24 @@ _UI_ARTIFACT_RE = re.compile(
     r"|(?:accueil\s+)?postulez\s+nos\s+offres?"
     r"|share\s+(?:link|on\s+\w+|via\s+\w+)"
     r"|job\s+description|description"
-    r"|log\s+in\s+today(?:\s+and)?"
-    r"|register\s+now(?:\s+to\s+get\s+started)?"
+    r"|log\s+in\s+today(?:\s+and)?|log\s*in|sign\s+in|sign\s+up|log\s+out|sign\s+out"
+    r"|register\s+now(?:\s+to\s+get\s+started)?|register"
     r"|get\s+real.time\s+job\s+notifications?"
     r"|view\s+pay\s+(?:&|and)\s+facility\s+details?"
-    r"|search\s+jobs?"
+    r"|search\s+jobs?|search"
+    r"|help|home|menu|skip\s+to\s+(?:main\s+)?content"
+    r"|my\s+(?:profile|account|applications?)|saved\s+jobs?"
+    r"|contact\s+us|about\s+us|faqs?|privacy\s+policy|terms\s+(?:of\s+(?:use|service))?"
+    # Separator lines (e.g. "---...---" or "--- 203 - EEO Job Group...")
+    r"|[-=_*\s]{3,}"
+    r"|[-=_]{3,}.*"
+    # Internal job metadata
+    r"|job\s+(?:id|req(?:uisition)?(?:\s+id)?)\s*[:#]?\s*\S+"
+    r"|posted\s+on\s*[:\-]?\s*.+"
+    r"|location\s*[:\-]\s*.+"
+    r"|grade\s+level\s*(?:\([^)]+\))?\s*:?\s*\S*"
+    # EEO job classification codes (e.g. "203 - Entry Professional (EEO Job Group)")
+    r"|.*\(eeo(?:[- ]2)?\s+job\s+(?:group|categor\w+)\).*"
     r")\s*$",
     re.IGNORECASE,
 )
@@ -648,6 +983,10 @@ def _convert_markdown_bold(src: str) -> str:
 def _build_clean_html(raw_html: str) -> str:
     src = urllib.parse.unquote(raw_html)
     src = re.sub(r"!?\*!<.*", "", src, flags=re.DOTALL)
+    # Remove unfilled template placeholders like [[title]] or {{field_name}}
+    src = re.sub(r"\[\[.*?\]\]|\{\{.*?\}\}", "", src)
+    # Strip bare URLs (not inside href/src attributes)
+    src = re.sub(r'(?<!=")https?://\S+', "", src)
     src = _convert_markdown_bold(src)
     soup = BeautifulSoup(src, "lxml")
     body: Tag = soup.find("body") or soup  # type: ignore[assignment]
@@ -658,14 +997,20 @@ def _build_clean_html(raw_html: str) -> str:
     _unwrap_nested_bold(body)
     _merge_consecutive_bold(body)
     _promote_standalone_bold(soup, body)
+    _wrap_orphan_lis(body, soup)
     _collapse_brs(body, soup)
     _split_p_on_blank_lines(body, soup)
     _promote_leading_bold_in_p(soup, body)
     _fix_h3_in_p(body)
     _fix_nested_p(body)
     _wrap_naked_text(soup, body)
+    _hoist_h3_from_li(soup, body)
+    _dedup_consecutive_h3(body)
     _normalize_inline_whitespace(body)
+    _convert_bullet_chars_to_list(body, soup)
+    _remove_nav_lists(body)
     _remove_ui_artifacts(body)
+    _drop_label_before_heading(body)
     _drop_empty_blocks(body)
     _enforce_allowed_tags(body)
 

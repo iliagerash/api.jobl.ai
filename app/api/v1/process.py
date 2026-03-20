@@ -1,12 +1,11 @@
 import logging
 import re
-from datetime import date
 
 from bs4 import BeautifulSoup
 from fastapi import APIRouter, Request
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.services.cleaner import clean_job_description
+from app.services.cleaner import clean_job_description, extract_expiry_raw
 from app.services.language import detect_language_code
 
 logger = logging.getLogger("jobl.api.process")
@@ -24,26 +23,32 @@ _APPLY_KEYWORDS_RE = re.compile(
     r"|send.{0,30}(resume|cv|application|candidature)"
     r"|email.{0,30}(resume|cv|application|candidature)"
     r"|resume|curriculum vitae|\bcv\b|cover.?letter"
-    r"|postuler|candidature|soumettre|envoyer.{0,30}(cv|candidature|courriel)"
+    r"|contact|staffing|recruit\w*|inquir\w*|emailing"
+    r"|postuler|appliquer|candidature|soumettre|envoyer.{0,30}(cv|candidature|courriel)"
     r"|faire.{0,10}demande"
     r")\b",
     re.IGNORECASE,
 )
 _EXCLUDE_KEYWORDS_RE = re.compile(
     r"\b("
-    r"accommodations?|accessibilit"
+    r"accommodations?|accessibilit\w*"
     r"|reasonable.{0,20}accommodations?"
     r"|disability|disabilities|handicap"
     r"|mesures?.{0,20}d.adaptation|adaptation"
     r"|accessibilité|personnes?.{0,20}handicapées?"
+    r"|aboriginal|torres\s+strait|indigenous|first\s+nations|koori\w*"
     r")\b",
     re.IGNORECASE,
 )
-_CONTEXT_WINDOW = 150  # characters around the email to search for keywords
+_EXCLUDE_LOCAL_PART_RE = re.compile(
+    r"accommodat|accessibl|disability|disabilities|noreply|no.reply|donotreply|do.not.reply|support|helpdesk|help.desk",
+    re.IGNORECASE,
+)
+_CONTEXT_WINDOW = 350  # characters around the email to search for keywords
 
 # Keywords that may appear in the local part of an application email address
 _LOCAL_PART_RE = re.compile(
-    r"apply|application|careers?|recruit\w*|hiring|jobs?|emploi|candidat\w*|rh|hr",
+    r"apply|application|careers?|recruit\w*|recrut\w*|hiring|jobs?|emploi|candidat\w*|rh|hr|human.?resources?|people.?culture|contact",
     re.IGNORECASE,
 )
 
@@ -57,15 +62,19 @@ def _extract_application_email(text: str) -> str | None:
        keywords — e.g. careers@company.com, hr@acme.org, recruitment@firm.com.
     """
     for m in _EMAIL_RE.finditer(text):
+        local_part = m.group(0).split("@")[0]
+        if _EXCLUDE_LOCAL_PART_RE.search(local_part):
+            continue
+        # Strong local-part signal (careers@, hr@, recruiter@, etc.): return immediately
+        # without context filtering so nearby disability/accommodation text doesn't block it.
+        if _LOCAL_PART_RE.search(local_part):
+            return m.group(0)
         start = max(0, m.start() - _CONTEXT_WINDOW)
         end = min(len(text), m.end() + _CONTEXT_WINDOW)
         context = text[start:end]
         if _EXCLUDE_KEYWORDS_RE.search(context):
             continue
         if _APPLY_KEYWORDS_RE.search(context):
-            return m.group(0)
-        local_part = m.group(0).split("@")[0]
-        if _LOCAL_PART_RE.search(local_part):
             return m.group(0)
     return None
 
@@ -130,10 +139,9 @@ def process(body: ProcessRequest, request: Request) -> ProcessResponse:
         from app.services.normalizer import _normalize_rules_only
         title_normalized = _normalize_rules_only(body.title)
 
-    # 4. Expiry date
-    expiry_date: str | None = None
-    if isinstance(clean_result.expiry, date):
-        expiry_date = clean_result.expiry.isoformat()
+    # 4. Expiry date — use raw extraction so past dates are still returned
+    raw_expiry = extract_expiry_raw(body.description)
+    expiry_date: str | None = raw_expiry.isoformat() if raw_expiry else None
 
     # 5. Extract application email and mask it in HTML
     plain_text = BeautifulSoup(clean_result.html, "lxml").get_text(separator=" ")

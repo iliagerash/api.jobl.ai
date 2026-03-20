@@ -24,7 +24,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from sqlalchemy import text
 from app.db.session import SessionLocal
-from app.services.cleaner import clean_job_description
+from app.services.cleaner import clean_job_description, extract_expiry_raw
 from app.api.v1.process import _extract_application_email
 
 # Re-use shared constants from generate_training_data
@@ -161,8 +161,8 @@ def main() -> None:
                         clean_result = clean_job_description(description or "")
                         desc_clean = clean_result.html
                         email = _extract_application_email(description or "")
-                        expiry = clean_result.expiry
-                        expiry_date = expiry if expiry and expiry != "expired" else None
+                        raw_expiry = extract_expiry_raw(description or "")
+                        expiry_date = raw_expiry.isoformat() if raw_expiry else None
 
                         try:
                             db.execute(
