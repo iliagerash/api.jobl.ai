@@ -19,19 +19,18 @@ _ALLOWED_IPS: frozenset[str] | None = (
 
 
 class IPAllowlistMiddleware(BaseHTTPMiddleware):
-    """Return 403 for any request whose source IP is not in ALLOWED_IPS.
+    """Return 403 for any request whose TCP source IP is not in ALLOWED_IPS.
 
-    Checks both the direct client IP and the first hop in X-Forwarded-For
-    (set by reverse proxies such as nginx). When ALLOWED_IPS is unset the
-    middleware is a no-op.
+    Only the direct connection IP (request.client.host) is checked — not
+    X-Forwarded-For, which can be trivially spoofed by the caller.
+    When ALLOWED_IPS is unset the middleware is a no-op.
     """
 
     async def dispatch(self, request: Request, call_next) -> Response:
         if _ALLOWED_IPS is not None:
             client_ip = request.client.host if request.client else ""
-            forwarded = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
-            if client_ip not in _ALLOWED_IPS and forwarded not in _ALLOWED_IPS:
-                logger.warning("Blocked request from %s (forwarded: %r)", client_ip, forwarded)
+            if client_ip not in _ALLOWED_IPS:
+                logger.warning("Blocked request from %s", client_ip)
                 return Response("Forbidden", status_code=403)
         return await call_next(request)
 
