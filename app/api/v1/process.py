@@ -2,15 +2,37 @@ import logging
 import re
 
 from bs4 import BeautifulSoup
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.core.config import settings
 from app.services.cleaner import clean_job_description, extract_expiry_raw
 from app.services.language import detect_language_code
 
 logger = logging.getLogger("jobl.api.process")
 
 router = APIRouter()
+
+_PROCESS_ALLOWED_IPS: frozenset[str] | None = (
+    frozenset(ip.strip() for ip in settings.process_allowed_ips.split(",") if ip.strip())
+    if settings.process_allowed_ips
+    else None
+)
+
+
+def _require_allowed_ip(request: Request) -> None:
+    """Reject requests whose source IP is not in PROCESS_ALLOWED_IPS.
+
+    Checks both the direct client IP and the first address in
+    X-Forwarded-For (set by reverse proxies such as nginx).
+    When PROCESS_ALLOWED_IPS is unset the check is skipped entirely.
+    """
+    if _PROCESS_ALLOWED_IPS is None:
+        return
+    client_ip = request.client.host if request.client else ""
+    forwarded = request.headers.get("X-Forwarded-For", "").split(",")[0].strip()
+    if client_ip not in _PROCESS_ALLOWED_IPS and forwarded not in _PROCESS_ALLOWED_IPS:
+        raise HTTPException(status_code=403, detail="Forbidden")
 
 _EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
 _EN_FR = {"en", "fr"}
@@ -100,7 +122,7 @@ class ProcessResponse(BaseModel):
     category: CategoryOut | None
 
 
-@router.post("/process", response_model=ProcessResponse)
+@router.post("/process", response_model=ProcessResponse, dependencies=[Depends(_require_allowed_ip)])
 def process(body: ProcessRequest, request: Request) -> ProcessResponse:
     # 1. Detect language from title + description text
     lang_result = detect_language_code(

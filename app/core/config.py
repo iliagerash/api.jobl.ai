@@ -22,6 +22,10 @@ class Settings(BaseSettings):
     # Categorizer (LightGBM — optional, category field is null if absent)
     categorizer_model_path: str | None = None
 
+    # Comma-separated list of IPs allowed to call /process.
+    # Leave unset (or empty) to allow all IPs.
+    process_allowed_ips: str | None = None
+
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @field_validator("model_dir", "tokenizer_dir", "categorizer_model_path", mode="after")
