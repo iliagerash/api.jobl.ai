@@ -37,6 +37,11 @@ class IPAllowlistMiddleware(BaseHTTPMiddleware):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if _ALLOWED_IPS is not None:
+        logger.info("IP allowlist active: %s", ", ".join(sorted(_ALLOWED_IPS)))
+    else:
+        logger.warning("IP allowlist disabled — all IPs are allowed (set ALLOWED_IPS to restrict)")
+
     # Normalizer (seq2seq model — optional)
     if settings.model_dir:
         try:
