@@ -429,6 +429,22 @@ def _is_section_header(text: str) -> bool:
     return True
 
 
+_BLOCK_LAYOUT_TAGS = {"div", "section", "article", "aside", "header", "footer", "main", "nav"}
+
+
+def _mark_block_layout_boundaries(body: Tag, soup: BeautifulSoup) -> None:
+    """Append a <br> to each block-level layout element that is a direct body child.
+
+    Called before _unwrap_layout_tags so that the visual row/section boundaries
+    imposed by <div> etc. survive as line-break separators after unwrapping.
+    Without this, consecutive <div> rows (e.g. ATS metadata tables) collapse into
+    one paragraph because _split_on_brs has nothing to split on.
+    """
+    for child in list(body.children):
+        if isinstance(child, Tag) and child.name in _BLOCK_LAYOUT_TAGS:
+            child.append(soup.new_tag("br"))
+
+
 def _unwrap_layout_tags(body: Tag) -> None:
     for tag in body.find_all(_LAYOUT_TAGS):
         tag.unwrap()
@@ -450,7 +466,7 @@ def _split_bold_on_br(body: Tag, soup: BeautifulSoup) -> None:
     becomes just <strong>Header</strong> and the header-promotion logic is unaffected.
     """
     for tag in list(body.find_all(["strong", "b", "em"])):
-        if not tag.find("br"):
+        if not tag.find("br", recursive=False):
             continue
         tag_name = tag.name
         segments: list[list] = []
@@ -778,8 +794,8 @@ def _promote_leading_bold_in_p(soup: BeautifulSoup, body: Tag) -> None:
             str(c) for c in p.children if c is not first
         ).strip().lstrip(":").strip()
         is_inline_label = (
-            len(header_text.split()) <= 3
-            and ":" in first.get_text()
+            (len(header_text.split()) <= 3 and ":" in first.get_text())
+            or (remainder and re.search(r"[\-\u2013\u2014]\s*$", first.get_text()))
         )
         if is_inline_label:
             continue
@@ -1070,6 +1086,7 @@ def _build_clean_html(raw_html: str) -> str:
     soup = BeautifulSoup(src, "lxml")
     body: Tag = soup.find("body") or soup  # type: ignore[assignment]
 
+    _mark_block_layout_boundaries(body, soup)
     _unwrap_layout_tags(body)
     _strip_all_attributes(body)
     _split_bold_on_br(body, soup)
