@@ -527,7 +527,8 @@ def _merge_consecutive_bold(body: Tag) -> None:
             and t1.lower() not in _INCOMPLETE_HEADER_WORDS
         ):
             continue
-        tag.string = t1 + " " + t2
+        separator = "" if (t1 and t2 and t1[-1].isalpha() and t2[0].islower()) else " "
+        tag.string = t1 + separator + t2
         nxt.decompose()
 
 
