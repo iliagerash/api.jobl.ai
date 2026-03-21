@@ -366,11 +366,74 @@ def _extract_expiry_from_text(full_text: str) -> date | None:
     return None
 
 
-def _extract_hl_date(soup: BeautifulSoup) -> date | None:
-    """Return the date from a <span class="hl-date"> tag if present."""
-    tag = soup.find("span", class_="hl-date")
-    if tag:
-        return _parse_date(tag.get_text(strip=True))
+# Label patterns that identify a start/availability date (not a deadline).
+_START_DATE_CONTEXT_RE = re.compile(
+    r"start\s+date|start(?:ing)?\s*(?:date)?|available\s+(?:from|date)?|date\s+de\s+d[eé]but|disponible\s+(?:le|à\s+partir)",
+    re.IGNORECASE,
+)
+
+# Label patterns for a job start date in plain text.
+_START_DATE_LABEL_RE = re.compile(
+    r"""
+    (?:start\s+date|starting\s+date?|date\s+de\s+d[eé]but)
+    \s*:?\s*
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+
+def _hl_date_is_start_date(tag: Tag) -> bool:
+    """Return True if an hl-date span is labelled as a job start date."""
+    prev = tag.previous_sibling
+    while prev is not None:
+        if isinstance(prev, NavigableString):
+            txt = str(prev).strip()
+            if txt:
+                return bool(_START_DATE_CONTEXT_RE.search(txt))
+            prev = prev.previous_sibling
+        elif isinstance(prev, Tag):
+            return bool(_START_DATE_CONTEXT_RE.search(prev.get_text()))
+        else:
+            break
+    return False
+
+
+def _extract_hl_dates(soup: BeautifulSoup) -> tuple[date | None, date | None]:
+    """Return (deadline, start_date) from all <span class="hl-date"> tags.
+
+    Inspects the text immediately preceding each span to classify it.
+    """
+    deadline: date | None = None
+    start_date: date | None = None
+    for tag in soup.find_all("span", class_="hl-date"):
+        d = _parse_date(tag.get_text(strip=True))
+        if d is None:
+            continue
+        if _hl_date_is_start_date(tag):
+            if start_date is None:
+                start_date = d
+        else:
+            if deadline is None:
+                deadline = d
+    return deadline, start_date
+
+
+def _extract_start_date_from_text(full_text: str) -> date | None:
+    """Scan plain text for a job start date label; low-priority expiry fallback."""
+    mm_dd = _detect_mm_dd(full_text)
+    lines = [l.strip() for l in full_text.splitlines() if l.strip()]
+    for i, line in enumerate(lines):
+        m = _START_DATE_LABEL_RE.search(line)
+        if m:
+            after = line[m.end():].strip()
+            if after:
+                d = _parse_date(after, mm_dd)
+                if d is not None:
+                    return d
+            if i + 1 < len(lines):
+                d = _parse_date(lines[i + 1], mm_dd)
+                if d is not None:
+                    return d
     return None
 
 
@@ -392,7 +455,14 @@ def extract_expiry(raw_html: str) -> date | Literal["expired"] | None:
         No deadline found, or posting is explicitly open-ended.
     """
     soup = BeautifulSoup(raw_html, "lxml")
-    found = _extract_hl_date(soup) or _extract_expiry_from_text(soup.get_text(separator="\n"))
+    text = soup.get_text(separator="\n")
+    hl_deadline, hl_start = _extract_hl_dates(soup)
+    found = (
+        hl_deadline
+        or _extract_expiry_from_text(text)
+        or _extract_start_date_from_text(text)
+        or hl_start
+    )
     if found is None:
         return None
     return found if found >= date.today() else "expired"
@@ -405,7 +475,14 @@ def extract_expiry_raw(raw_html: str) -> date | None:
     informative for the reviewer.
     """
     soup = BeautifulSoup(raw_html, "lxml")
-    return _extract_hl_date(soup) or _extract_expiry_from_text(soup.get_text(separator="\n"))
+    text = soup.get_text(separator="\n")
+    hl_deadline, hl_start = _extract_hl_dates(soup)
+    return (
+        hl_deadline
+        or _extract_expiry_from_text(text)
+        or _extract_start_date_from_text(text)
+        or hl_start
+    )
 
 
 # ---------------------------------------------------------------------------
