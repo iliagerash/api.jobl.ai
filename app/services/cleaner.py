@@ -759,6 +759,12 @@ def _promote_leading_bold_in_p(soup: BeautifulSoup, body: Tag) -> None:
         )
         if is_inline_label:
             continue
+        # If the remainder starts with a lowercase letter the bold is an inline
+        # subject continuing into a sentence (e.g. "<strong>Unimax</strong> brings
+        # together…"), not a standalone section header.
+        remainder_plain = BeautifulSoup(remainder, "lxml").get_text() if remainder else ""
+        if remainder_plain and remainder_plain.lstrip()[0:1].islower():
+            continue
         h3 = soup.new_tag("h3")
         h3.string = header_text
         if remainder:
