@@ -407,7 +407,7 @@ class CleanResult:
 
 def _is_header_fragment(text: str) -> bool:
     text = text.strip()
-    if not text or len(text) < 2 or len(text) > 60:
+    if not text or len(text) > 60:
         return False
     if len(text.split()) > 8:
         return False
@@ -527,29 +527,20 @@ def _merge_consecutive_bold(body: Tag) -> None:
     for tag in body.find_all(["strong", "b"]):
         if tag.parent is None:
             continue
-        nxt = tag.next_sibling
-        while isinstance(nxt, NavigableString) and not nxt.strip():
-            nxt = nxt.next_sibling
-        if not (isinstance(nxt, Tag) and nxt.name in ("strong", "b")):
-            continue
-        t1 = tag.get_text(strip=True)
-        t2 = nxt.get_text(strip=True)
-        if not (_is_header_fragment(t1) and _is_header_fragment(t2)):
-            continue
-        if t1.lower() in t2.lower() or t2.lower() in t1.lower():
-            continue
-        # Both are standalone headers — keep separate so each becomes its own <h3>,
-        # unless t1 is an incomplete word (e.g. "Why", "How") that needs the next
-        # fragment to form a complete heading (e.g. "Why Jerry.ai").
-        if (
-            _is_section_header(t1) and _is_section_header(t2)
-            and t1.lower() not in _INCOMPLETE_HEADER_WORDS
-            and not (t2 and t2[0].islower())  # lowercase start → word split, must merge
-        ):
-            continue
-        separator = "" if (t1 and t2 and t1[-1].isalpha() and t2[0].islower()) else " "
-        tag.string = t1 + separator + t2
-        nxt.decompose()
+        while True:
+            nxt = tag.next_sibling
+            while isinstance(nxt, NavigableString) and not nxt.strip():
+                nxt = nxt.next_sibling
+            if not (isinstance(nxt, Tag) and nxt.name in ("strong", "b")):
+                break
+            t1 = tag.get_text(strip=True)
+            t2 = nxt.get_text(strip=True)
+            if not (_is_header_fragment(t1) and _is_header_fragment(t2)):
+                break
+            if t1.lower() in t2.lower() or t2.lower() in t1.lower():
+                break
+            tag.string = t1 + " " + t2
+            nxt.decompose()
 
 
 def _promote_standalone_bold(soup: BeautifulSoup, body: Tag) -> None:
@@ -885,9 +876,9 @@ def _promote_leading_bold_in_p(soup: BeautifulSoup, body: Tag) -> None:
         remainder = "".join(
             str(c) for c in p.children if c is not first
         ).strip().lstrip(":").strip()
-        is_inline_label = (
+        is_inline_label = bool(remainder) and (
             (len(header_text.split()) <= 3 and ":" in first.get_text())
-            or (remainder and re.search(r"[\-\u2013\u2014]\s*$", first.get_text()))
+            or re.search(r"[\-\u2013\u2014]\s*$", first.get_text())
         )
         if is_inline_label:
             continue
