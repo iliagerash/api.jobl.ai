@@ -688,6 +688,8 @@ def _is_section_header(text: str) -> bool:
         return False
     if "@" in text:  # email addresses are not section headers
         return False
+    if re.search(r"#\d", text):  # reference codes like #11-26 are not section headers
+        return False
     return True
 
 
