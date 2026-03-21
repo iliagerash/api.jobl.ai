@@ -189,6 +189,8 @@ _OPEN_ENDED_RE = re.compile(r"^\s*(ongoing|until\s+filled|open)\s*$", re.IGNOREC
 _EN_DATE_RE = re.compile(r"([A-Za-z]+)\s+(\d{1,2}),?\s+(\d{4})")
 # FR date: "2 avril 2026"
 _FR_DATE_RE = re.compile(r"(\d{1,2})\s+([a-zéûôàî]+)\s+(\d{4})", re.IGNORECASE)
+# Ordinal date: "22nd March 2026" / "1st April 2026" / "3rd March 2026"
+_ORDINAL_DATE_RE = re.compile(r"(\d{1,2})(?:st|nd|rd|th)\s+([A-Za-z]+)\s+(\d{4})", re.IGNORECASE)
 # Oracle/ATS abbreviated-month date: "16-MAR-2026"
 _DD_MON_YYYY_RE = re.compile(r"(\d{1,2})-([A-Za-z]{3})-(\d{4})")
 _MON_ABBR: dict[str, int] = {
@@ -245,6 +247,16 @@ def _parse_date(text: str, mm_dd_first: bool = False) -> date | None:
         for month, day in pairs:
             try:
                 return date(year, month, day)
+            except ValueError:
+                pass
+
+    # Ordinal DD Month YYYY: "22nd March 2026", "1st April 2026"
+    m = _ORDINAL_DATE_RE.search(text)
+    if m:
+        month = _EN_MONTHS.get(m.group(2).lower())
+        if month:
+            try:
+                return date(int(m.group(3)), month, int(m.group(1)))
             except ValueError:
                 pass
 
