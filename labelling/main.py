@@ -5,8 +5,11 @@ FastAPI web app for manually reviewing and correcting job category labels
 stored in the job_labelling table.
 
 Usage:
-    python labelling/main.py
+    python labelling/main.py [--verified]
     uvicorn labelling.main:app --reload
+
+Flags:
+    --verified   Show only rows with verified = true (for evaluate-cycle review)
 """
 
 import os
@@ -24,6 +27,11 @@ from pydantic import BaseModel
 from sqlalchemy import text
 
 from app.db.session import SessionLocal
+
+# Parse --verified before uvicorn sees sys.argv
+_verified_only: bool = "--verified" in sys.argv
+if _verified_only:
+    sys.argv.remove("--verified")
 
 app = FastAPI(title="Job Labelling")
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
@@ -62,13 +70,15 @@ CATEGORY_MAP = {cid: title for cid, title in CATEGORIES}
 
 @app.get("/", response_class=HTMLResponse)
 async def index(request: Request) -> HTMLResponse:
+    verified_filter = "WHERE verified = true" if _verified_only else ""
     db = SessionLocal()
     try:
         counts = db.execute(
-            text("""
+            text(f"""
                 SELECT category_id, COUNT(*) AS n,
                        SUM(CASE WHEN labelled_at IS NOT NULL THEN 1 ELSE 0 END) AS reviewed
                 FROM job_labelling
+                {verified_filter}
                 GROUP BY category_id
                 ORDER BY category_id
             """)
@@ -103,13 +113,14 @@ async def index(request: Request) -> HTMLResponse:
 async def get_jobs(category_id: int) -> list[dict[str, Any]]:
     db = SessionLocal()
     try:
+        extra = "AND verified = true" if _verified_only else ""
         rows = db.execute(
-            text("""
+            text(f"""
                 SELECT id, title, description, description_clean, company_name,
                        country_code, original_category, email,
                        expiry_date, category_id, labelled_at, verified
                 FROM job_labelling
-                WHERE category_id = :cat_id
+                WHERE category_id = :cat_id {extra}
                 ORDER BY labelled_at NULLS FIRST, id
             """),
             {"cat_id": category_id},
