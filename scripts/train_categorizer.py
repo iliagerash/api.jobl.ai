@@ -50,8 +50,8 @@ def build_text(row: pd.Series) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Train LightGBM job categorizer")
-    parser.add_argument("--data", required=True, help="Path to categorizer_training.csv")
-    parser.add_argument("--output", required=True, help="Path to write .pkl artifact")
+    parser.add_argument("--data", default="data/categorizer_training.csv", help="Path to categorizer_training.csv (default: data/categorizer_training.csv)")
+    parser.add_argument("--output", default="models/categorizer.pkl", help="Path to write .pkl artifact (default: models/categorizer.pkl)")
     parser.add_argument("--n-estimators", type=int, default=500)
     parser.add_argument("--num-leaves", type=int, default=63)
     parser.add_argument("--early-stopping", type=int, default=30, help="Early stopping rounds")
