@@ -77,6 +77,13 @@
     float: right; margin: 0 0 6px 6px;
     border-radius: 4px; padding: 2px 7px; font-size: 11px; cursor: pointer; line-height: 1.4;
   }
+  /* Bottom button bar — same buttons but no float */
+  .cell-bottom-bar {
+    clear: both; display: flex; justify-content: flex-end; gap: 6px;
+    margin-top: 10px; padding-top: 8px; border-top: 1px solid #e4e8ed;
+  }
+  .cell-bottom-bar .cell-copy-btn,
+  .cell-bottom-bar .cell-verify-btn { float: none; margin: 0; }
   .cell-copy-btn {
     background: none; border: 1px solid #ccc; color: #888;
   }
@@ -207,9 +214,19 @@ function renderJobs(jobs) {
     /* ── Left: original description ── */
     const tdOrig = document.createElement('td');
     tdOrig.innerHTML = `<div class="cell-inner"><button class="cell-copy-btn" data-col="orig">⎘ Copy</button><div class="desc-orig"></div></div>`;
-    tdOrig.querySelector('.desc-orig').innerHTML = job.description_raw || '';
-    highlightInElement(tdOrig.querySelector('.desc-orig'));
-    tdOrig.querySelector('.cell-copy-btn').addEventListener('click', e => copyCell(e.currentTarget, tdOrig.querySelector('.desc-orig')));
+    const origDescEl = tdOrig.querySelector('.desc-orig');
+    origDescEl.innerHTML = job.description_raw || '';
+    highlightInElement(origDescEl);
+    tdOrig.querySelector('.cell-copy-btn').addEventListener('click', e => copyCell(e.currentTarget, origDescEl));
+    // Bottom copy button for left cell
+    const origBottomBar = document.createElement('div');
+    origBottomBar.className = 'cell-bottom-bar';
+    const origBottomCopy = document.createElement('button');
+    origBottomCopy.className = 'cell-copy-btn';
+    origBottomCopy.textContent = '⎘ Copy';
+    origBottomCopy.addEventListener('click', e => copyCell(e.currentTarget, origDescEl));
+    origBottomBar.appendChild(origBottomCopy);
+    tdOrig.querySelector('.cell-inner').appendChild(origBottomBar);
 
     /* ── Right: cleaned description + category ── */
     const tdClean = document.createElement('td');
@@ -222,11 +239,10 @@ function renderJobs(jobs) {
     cleanCopyBtn.textContent = '⎘ Copy';
     cellDiv.appendChild(cleanCopyBtn);
 
-    // Verify button (left of Copy)
+    // Verify button (left of Copy) — top
     const verifyBtn = document.createElement('button');
     verifyBtn.className = 'cell-verify-btn' + (job.verified ? ' verified' : '');
     verifyBtn.textContent = job.verified ? '⏳ Pending' : 'Verify';
-    verifyBtn.addEventListener('click', () => onVerify(verifyBtn, job.id));
     cellDiv.appendChild(verifyBtn);
 
     const descDiv = document.createElement('div');
@@ -263,6 +279,25 @@ function renderJobs(jobs) {
     sel.addEventListener('change', () => onCategoryChange(sel, job.id, tr));
 
     cellDiv.appendChild(labelSection);
+
+    // Bottom button bar for right cell
+    const cleanBottomBar = document.createElement('div');
+    cleanBottomBar.className = 'cell-bottom-bar';
+    const bottomCopyBtn = document.createElement('button');
+    bottomCopyBtn.className = 'cell-copy-btn';
+    bottomCopyBtn.textContent = '⎘ Copy';
+    bottomCopyBtn.addEventListener('click', e => copyCell(e.currentTarget, descDiv));
+    const bottomVerifyBtn = document.createElement('button');
+    bottomVerifyBtn.className = 'cell-verify-btn' + (job.verified ? ' verified' : '');
+    bottomVerifyBtn.textContent = job.verified ? '⏳ Pending' : 'Verify';
+    cleanBottomBar.appendChild(bottomCopyBtn);
+    cleanBottomBar.appendChild(bottomVerifyBtn);
+    cellDiv.appendChild(cleanBottomBar);
+
+    // Wire up both verify buttons together
+    const allVerifyBtns = [verifyBtn, bottomVerifyBtn];
+    allVerifyBtns.forEach(b => b.addEventListener('click', () => onVerify(allVerifyBtns, job.id)));
+
     tdClean.appendChild(cellDiv);
 
     tr.appendChild(tdOrig);
@@ -307,24 +342,26 @@ function onCategoryChange(sel, jobId, tr) {
 }
 
 /* ── Verify ── */
-function onVerify(btn, jobId) {
-  btn.disabled = true;
+function onVerify(btns, jobId) {
+  btns.forEach(b => b.disabled = true);
   fetch(`/api/jobs/${jobId}/verify`, { method: 'PATCH' })
     .then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.json(); })
     .then(data => {
-      btn.disabled = false;
-      if (data.verified) {
-        btn.className = 'cell-verify-btn verified';
-        btn.textContent = '⏳ Pending';
-      } else {
-        btn.className = 'cell-verify-btn';
-        btn.textContent = 'Verify';
-      }
+      btns.forEach(b => {
+        b.disabled = false;
+        if (data.verified) {
+          b.className = 'cell-verify-btn verified';
+          b.textContent = '⏳ Pending';
+        } else {
+          b.className = 'cell-verify-btn';
+          b.textContent = 'Verify';
+        }
+      });
       const job = currentJobs.find(j => j.id === jobId);
       if (job) job.verified = data.verified;
     })
     .catch(err => {
-      btn.disabled = false;
+      btns.forEach(b => b.disabled = false);
       alert('Failed to verify: ' + err.message);
     });
 }

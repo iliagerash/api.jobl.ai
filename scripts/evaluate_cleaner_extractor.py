@@ -1,0 +1,121 @@
+"""
+evaluate_cleaner_extractor.py
+──────────────────────────────
+Re-runs clean_job_description() and email/expiry extraction for every row in
+job_labelling where verified = true, then updates description_clean, email,
+and expiry_date in the DB.
+
+Workflow:
+  1. Run this script after fixing extraction bugs.
+  2. Open the labelling web page and review the updated results.
+  3. For each job that looks correct, click "Verify".
+  4. For jobs that still have issues, note the pattern and iterate.
+  5. Once satisfied with a batch, click "Pending" to reset verified → false.
+
+Usage:
+    python scripts/evaluate_cleaner_extractor.py [--dry-run]
+"""
+
+import argparse
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+from bs4 import BeautifulSoup
+from sqlalchemy import text
+
+from app.db.session import SessionLocal
+from app.services.cleaner import clean_job_description, extract_expiry_raw
+from app.api.v1.process import _extract_application_email
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(
+        description="Re-evaluate cleaner/extractor for verified labelling rows"
+    )
+    parser.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="Print changes without writing to the DB",
+    )
+    args = parser.parse_args()
+
+    db = SessionLocal()
+    try:
+        rows = db.execute(
+            text("""
+                SELECT id, description
+                FROM job_labelling
+                WHERE verified = true
+                ORDER BY id
+            """)
+        ).fetchall()
+
+        total = len(rows)
+        print(f"Found {total} verified row(s) to process.\n")
+        if not total:
+            return
+
+        updated = 0
+        errors = 0
+
+        for row_id, description in rows:
+            desc = description or ""
+
+            try:
+                clean_result = clean_job_description(desc)
+                new_desc_clean = clean_result.html
+
+                plain_text = BeautifulSoup(new_desc_clean, "lxml").get_text(separator=" ")
+                new_email = _extract_application_email(plain_text)
+
+                raw_expiry = extract_expiry_raw(desc)
+                new_expiry = raw_expiry.isoformat() if raw_expiry else None
+            except Exception as exc:
+                print(f"[{row_id}] ERROR during extraction: {exc}")
+                errors += 1
+                continue
+
+            print(f"[{row_id}] email={new_email!r}  expiry={new_expiry!r}")
+
+            if not args.dry_run:
+                try:
+                    db.execute(
+                        text("""
+                            UPDATE job_labelling
+                            SET description_clean = :desc_clean,
+                                email             = :email,
+                                expiry_date       = :expiry
+                            WHERE id = :id
+                        """),
+                        {
+                            "desc_clean": new_desc_clean,
+                            "email": new_email,
+                            "expiry": new_expiry,
+                            "id": row_id,
+                        },
+                    )
+                    db.commit()
+                    updated += 1
+                except Exception as exc:
+                    db.rollback()
+                    print(f"  → DB write error: {exc}")
+                    errors += 1
+            else:
+                updated += 1  # count as "would update" in dry-run
+
+        suffix = " (dry run — no changes written)" if args.dry_run else ""
+        print(
+            f"\nDone. Processed: {total} | "
+            f"{'Would update' if args.dry_run else 'Updated'}: {updated} | "
+            f"Errors: {errors}"
+            + suffix
+        )
+
+    finally:
+        db.close()
+
+
+if __name__ == "__main__":
+    main()
