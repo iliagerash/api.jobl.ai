@@ -54,7 +54,7 @@ def main() -> None:
     parser.add_argument("--output", default="models/categorizer.pkl", help="Path to write .pkl artifact (default: models/categorizer.pkl)")
     parser.add_argument("--n-estimators", type=int, default=500)
     parser.add_argument("--num-leaves", type=int, default=63)
-    parser.add_argument("--early-stopping", type=int, default=30, help="Early stopping rounds")
+    parser.add_argument("--early-stopping", type=int, default=50, help="Early stopping rounds")
     args = parser.parse_args()
 
     print(f"Loading training data from {args.data} ...")
@@ -76,7 +76,10 @@ def main() -> None:
     y = (df_train["category_id"].astype(int) - 1).tolist()
 
     print("Vectorizing text (TF-IDF) ...", flush=True)
-    tfidf = TfidfVectorizer(max_features=20_000, ngram_range=(1, 2), min_df=5, sublinear_tf=True)
+    n_rows = len(df)
+    max_features = min(20_000, max(2_000, n_rows // 2))
+    min_df = 1 if n_rows < 10_000 else 5
+    tfidf = TfidfVectorizer(max_features=max_features, ngram_range=(1, 2), min_df=min_df, sublinear_tf=True)
     X_vec = tfidf.fit_transform(X_text)
     print(f"  Done — matrix shape: {X_vec.shape}", flush=True)
 
