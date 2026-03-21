@@ -826,9 +826,10 @@ def _split_p_on_blank_lines(body: Tag, soup: BeautifulSoup) -> None:
                 new_paras[i - 1].insert_after(np_)
 
 
-# Unicode characters used as bullet separators in Word/ATS-exported HTML
-_ANY_BULLET_RE = re.compile(r"[•◦◆▪▸▶✓✔●○■□▫▹]")
-_BULLET_SPLIT_RE = re.compile(r"\s*[•◦◆▪▸▶✓✔●○■□▫▹]\s*")
+# Unicode characters used as bullet separators in Word/ATS-exported HTML.
+# \uf0b7 is the Wingdings private-use-area bullet very common in ATS exports.
+_ANY_BULLET_RE = re.compile(r"[•◦◆▪▸▶✓✔●○■□▫▹\uf0b7]")
+_BULLET_SPLIT_RE = re.compile(r"\s*[•◦◆▪▸▶✓✔●○■□▫▹\uf0b7]\s*")
 
 
 def _convert_bullet_chars_to_list(body: Tag, soup: BeautifulSoup) -> None:
