@@ -174,6 +174,13 @@ _INLINE_CLOSE_ON_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Inline prose: "applications will be accepted until March 13, 2026"
+# The date may be split across multiple lines when each word is in its own <strong>.
+_INLINE_ACCEPTED_UNTIL_RE = re.compile(
+    r"accepted\s+until\s*(.*)",
+    re.IGNORECASE,
+)
+
 # Open-ended values — no expiry implied
 _OPEN_ENDED_RE = re.compile(r"^\s*(ongoing|until\s+filled|open)\s*$", re.IGNORECASE)
 
@@ -339,6 +346,19 @@ def _extract_expiry_from_text(full_text: str) -> date | None:
                 captured = lines[i + 1]
             if captured:
                 d = _parse_date(captured, mm_dd)
+                if d is not None:
+                    return d
+
+        # Inline: "applications will be accepted until March 13, 2026"
+        # Date may be fragmented across several lines (each word in its own <strong>).
+        m4 = _INLINE_ACCEPTED_UNTIL_RE.search(line)
+        if m4:
+            parts: list[str] = [m4.group(1).strip()]
+            for j in range(1, 5):
+                if i + j < len(lines):
+                    parts.append(lines[i + j])
+                candidate = " ".join(p for p in parts if p)
+                d = _parse_date(candidate, mm_dd)
                 if d is not None:
                     return d
 
