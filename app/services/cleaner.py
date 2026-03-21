@@ -175,9 +175,10 @@ _INLINE_CLOSE_ON_RE = re.compile(
 )
 
 # Inline prose: "applications will be accepted until March 13, 2026"
+#               "Mattress Firm is accepting applications until: 03/31/2026"
 # The date may be split across multiple lines when each word is in its own <strong>.
 _INLINE_ACCEPTED_UNTIL_RE = re.compile(
-    r"accepted\s+until\s*(.*)",
+    r"accept(?:ed|ing\s+\w+)\s+until\s*:?\s*(.*)",
     re.IGNORECASE,
 )
 
@@ -365,6 +366,14 @@ def _extract_expiry_from_text(full_text: str) -> date | None:
     return None
 
 
+def _extract_hl_date(soup: BeautifulSoup) -> date | None:
+    """Return the date from a <span class="hl-date"> tag if present."""
+    tag = soup.find("span", class_="hl-date")
+    if tag:
+        return _parse_date(tag.get_text(strip=True))
+    return None
+
+
 def extract_expiry(raw_html: str) -> date | Literal["expired"] | None:
     """Extract the application deadline from raw job-posting HTML.
 
@@ -383,8 +392,7 @@ def extract_expiry(raw_html: str) -> date | Literal["expired"] | None:
         No deadline found, or posting is explicitly open-ended.
     """
     soup = BeautifulSoup(raw_html, "lxml")
-    text = soup.get_text(separator="\n")
-    found = _extract_expiry_from_text(text)
+    found = _extract_hl_date(soup) or _extract_expiry_from_text(soup.get_text(separator="\n"))
     if found is None:
         return None
     return found if found >= date.today() else "expired"
@@ -397,8 +405,7 @@ def extract_expiry_raw(raw_html: str) -> date | None:
     informative for the reviewer.
     """
     soup = BeautifulSoup(raw_html, "lxml")
-    text = soup.get_text(separator="\n")
-    return _extract_expiry_from_text(text)
+    return _extract_hl_date(soup) or _extract_expiry_from_text(soup.get_text(separator="\n"))
 
 
 # ---------------------------------------------------------------------------
@@ -1183,8 +1190,10 @@ def _build_clean_html(raw_html: str) -> str:
     src = re.sub(r"!\*!<.*", "", src, flags=re.DOTALL)
     # Remove unfilled template placeholders like [[title]] or {{field_name}}
     src = re.sub(r"\[\[.*?\]\]|\{\{.*?\}\}", "", src)
-    # Strip bare URLs (not inside href/src attributes)
-    src = re.sub(r'(?<!=")https?://\S+', "", src)
+    # Strip bare URLs (not inside href/src attributes).
+    # Use [^\s<>]+ instead of \S+ so HTML tags immediately following the URL
+    # (e.g. https://example.com<br>) are not consumed.
+    src = re.sub(r'(?<!=")https?://[^\s<>]+', "", src)
     src = _convert_markdown_bold(src)
     soup = BeautifulSoup(src, "lxml")
     body: Tag = soup.find("body") or soup  # type: ignore[assignment]
