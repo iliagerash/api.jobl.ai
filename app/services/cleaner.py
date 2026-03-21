@@ -1165,15 +1165,19 @@ def _dedup_consecutive_h3(body: Tag) -> None:
     headings (e.g. two "Description du poste" blocks). Only same-text pairs
     are removed; consecutive headings with different text (e.g. "Step 1",
     "Step 2", …) are kept intact.
+    Empty/whitespace-only sibling elements (e.g. empty <p> left over from
+    <br><br> inside the first <strong>) are skipped when looking for the
+    next meaningful sibling.
     """
     for h3 in list(body.find_all("h3")):
-        # find_next_sibling(True) skips whitespace text nodes that lxml may
-        # insert between adjacent block elements.
-        next_el = h3.find_next_sibling(True)
+        # Walk forward past empty siblings (empty tags or whitespace-only text).
+        sib = h3.find_next_sibling(True)
+        while sib and not sib.get_text(strip=True):
+            sib = sib.find_next_sibling(True)
         if (
-            next_el
-            and next_el.name == "h3"
-            and h3.get_text(strip=True).lower() == next_el.get_text(strip=True).lower()
+            sib
+            and sib.name == "h3"
+            and h3.get_text(strip=True).lower() == sib.get_text(strip=True).lower()
         ):
             h3.decompose()
 
