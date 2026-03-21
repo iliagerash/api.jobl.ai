@@ -5,11 +5,11 @@ FastAPI web app for manually reviewing and correcting job category labels
 stored in the job_labelling table.
 
 Usage:
-    python labelling/main.py [--verified]
+    python labelling/main.py
     uvicorn labelling.main:app --reload
 
-Flags:
-    --verified   Show only rows with verified = true (for evaluate-cycle review)
+Environment variables (.env):
+    VERIFIED_LABELLING=true   Show only rows with verified = true
 """
 
 import os
@@ -28,10 +28,7 @@ from sqlalchemy import text
 
 from app.db.session import SessionLocal
 
-# Parse --verified before uvicorn sees sys.argv
-_verified_only: bool = "--verified" in sys.argv
-if _verified_only:
-    sys.argv.remove("--verified")
+_verified_only: bool = os.environ.get("VERIFIED_LABELLING", "").lower() in ("1", "true", "yes")
 
 app = FastAPI(title="Job Labelling")
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))

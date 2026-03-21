@@ -85,10 +85,11 @@ api.jobl.ai/
 │   ├── main.py                    # FastAPI labelling web app (port 8002)
 │   └── templates/index.html       # Single-page labelling UI
 ├── scripts/
-│   ├── extract_labelling_data.py      # Populate job_labelling table (balanced per class)
-│   ├── generate_training_data.py      # Bootstrap categorizer training CSV from DB
+│   ├── extract_labelling_data.py           # Populate job_labelling table (balanced per class)
+│   ├── evaluate_cleaner_extractor.py       # Re-run cleaner/extractor on verified rows
+│   ├── generate_training_data.py           # Bootstrap categorizer training CSV from DB
 │   ├── generate_training_data_labelled.py  # Training CSV from manually reviewed job_labelling
-│   └── train_categorizer.py           # Train LightGBM, save .pkl artifact
+│   └── train_categorizer.py               # Train LightGBM, save .pkl artifact
 ├── sql/
 │   ├── seed_categories.sql      # 26 category rows
 │   ├── seed_countries.sql
@@ -166,32 +167,43 @@ For mixed-language countries (CA, CH, SG), langid result is used directly if in 
 
 ### 2. Description Cleaning
 
-`app/services/cleaner.py` applies a 15-step HTML normalization pipeline:
+`app/services/cleaner.py` applies an HTML normalization pipeline:
 
 1. URL-decode injected markup
-2. Strip malformed sentinel blocks
-3. Unwrap layout tags (`div`, `span`, `table`, `font`, `center`, `section`, …)
-4. Strip all HTML attributes
-5. Remove `<br>` inside bold tags
-6. Unwrap nested bold tags
-7. Merge consecutive bold headers
-8. Promote standalone bold to `<h3>`
-9. Collapse `<br>`-delimited content into `<p>` blocks
-10. Promote leading bold in paragraphs to section headers
-11. Fix invalid `<h3>` nested inside `<p>`
-12. Unwrap double-nested `<p>`
-13. Wrap bare text nodes in `<p>`
-14. Drop empty blocks
-15. Enforce allowlist: `p`, `h2`, `h3`, `h4`, `ul`, `ol`, `li`, `strong`, `em`, `a`
+2. Strip JSON-style backslash escapes (`\"` → `"`)
+3. Strip malformed sentinel blocks
+4. Unwrap layout tags (`div`, `span`, `table`, `font`, `center`, `section`, …)
+5. Strip all HTML attributes
+6. Remove `<br>` inside bold tags
+7. Unwrap nested bold tags
+8. Merge consecutive bold headers
+9. Promote standalone bold to `<h3>`
+10. Wrap bare `<li>` elements (no parent `<ul>`) in `<ul>` before block-splitting
+11. Collapse `<br>`-delimited content into `<p>` blocks
+12. Promote leading bold in paragraphs to section headers
+13. Fix invalid `<h3>` nested inside `<p>`
+14. Unwrap double-nested `<p>`
+15. Wrap bare text nodes in `<p>`
+16. Remove duplicate consecutive `<h3>` headings
+17. Remove UI navigation artifacts (see below)
+18. Drop empty blocks
+19. Enforce allowlist: `p`, `h2`, `h3`, `h4`, `ul`, `ol`, `li`, `strong`, `em`, `a`
 
-**Expiry extraction** scans for patterns such as:
+**UI artifact removal** strips job-board chrome that leaks into descriptions — standalone paragraphs or headings matching patterns such as:
 
-- `Application deadline: March 30, 2026`
-- `Closing date: 30/03/2026`
-- `Date limite pour postuler: 30 mars 2026`
-- `Avant le 2026-03-30`
+- Navigation: `Previous job Next job`, `Back to search results`
+- Portal prompts: `Are you a [Company] Employee?`, `Open My Career Portal`, `Current Employees should apply …`
+- Email widget: `Email This Job To`, `Your email is on its way…`, `Email has not been sent`
+- Print notice: `Please print/save this job description …`
+- Separator lines, job metadata labels, EEO codes
 
-Returns an ISO date for future deadlines, `"expired"` for past dates, or `None`.
+**Expiry extraction** (`extract_expiry` / `extract_expiry_raw`) scans plain text for deadline patterns:
+
+- Label-based: `Application deadline:`, `Closing date:`, `Posting End Date:`, `Job Posting End Date:`, `Apply by date:`, `Open until:`, `Position start date:`, and French equivalents (`Date limite pour postuler:`, `Date de clôture:`, `Date d'affichage:`, `Période d'inscription:`, `Avant le`, …)
+- Inline prose: `posting will close on …`, `posting will expire on or before …`, `apply by April 1, 2026`, `submit a résumé by …`
+- Date formats: `YYYY-MM-DD`, `MM/DD/YYYY`, `DD/MM/YYYY`, `Month D, YYYY`, `D Month YYYY`, `D mois AAAA`, `M/D/YY` (2-digit year interpreted as 20xx)
+
+`extract_expiry` returns an ISO date for future deadlines, `"expired"` for past dates, or `None`. `extract_expiry_raw` always returns the date regardless of whether it has passed (used when building training data).
 
 ### 3. Title Normalization (EN/FR only)
 
@@ -520,6 +532,11 @@ Opens at `http://<host>:8002/`. Features:
 - Category dropdown per job — change saves instantly via Ajax, no submit button
 - Auto-assigned / Reviewed badge tracks review status
 - **⎘ Copy** button in each column header copies all visible descriptions (separated by `---`) to clipboard
+- **Verify / ⏳ Pending** button (top and bottom of each right-hand cell) — toggles `verified = true/false` in the DB
+
+**Evaluate-cycle mode** — set `VERIFIED_LABELLING=true` in `.env` to show only `verified = true` rows.
+Use this after running `scripts/evaluate_cleaner_extractor.py` to review updated cleaning results.
+Once satisfied, click **⏳ Pending** to reset `verified → false` for that job and move on.
 
 ### 3. Export training data
 
