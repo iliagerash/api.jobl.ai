@@ -38,7 +38,7 @@ _EXCLUDE_KEYWORDS_RE = re.compile(
     r"|accessibilité|personnes?.{0,20}handicapées?"
     r"|aboriginal|torres\s+strait|indigenous|first\s+nations|koori\w*"
     r"|fraud|scam|suspicious|legitimacy|authenticity|phishing|spoofing|impersonat"
-    r"|gdpr|ccpa|\baedt\b"
+    r"|gdpr|ccpa|\baedt\b|pay\s+transparency"
     r"|your\s+(?:personal\s+)?data\s+(?:is|are|may\s+be)\s+process\w*"
     r"|data\s+protection\s+(?:officer|law|regulation|act|policy)"
     r"|data\s+retention"
@@ -48,7 +48,7 @@ _EXCLUDE_KEYWORDS_RE = re.compile(
     re.IGNORECASE,
 )
 _EXCLUDE_LOCAL_PART_RE = re.compile(
-    r"accommodat|accessibl|disability|disabilities|compliance|noreply|no.reply|donotreply|do.not.reply|support|helpdesk|help.desk|fraud|scam",
+    r"accommodat|accessib|disability|disabilities|compliance|noreply|no.reply|donotreply|do.not.reply|support|helpdesk|help.desk|fraud|scam",
     re.IGNORECASE,
 )
 _CONTEXT_WINDOW = 250  # characters around the email to search for keywords
