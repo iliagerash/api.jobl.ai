@@ -26,9 +26,10 @@ from fastapi.templating import Jinja2Templates
 from pydantic import BaseModel
 from sqlalchemy import text
 
+from app.core.config import settings
 from app.db.session import SessionLocal
 
-_verified_only: bool = os.environ.get("VERIFIED_LABELLING", "").lower() in ("1", "true", "yes")
+_verified_only: bool = settings.verified_labelling
 
 app = FastAPI(title="Job Labelling")
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
