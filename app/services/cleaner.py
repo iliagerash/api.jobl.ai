@@ -607,6 +607,16 @@ def _split_label_bold_rows(body: Tag, soup: BeautifulSoup) -> None:
         for lb in label_bolds:
             if _has_preceding_content(lb):
                 lb.insert_before(soup.new_tag("br"))
+        # Also add <br> before the first non-label <b>/<strong> that immediately
+        # follows the last label-bold's value (e.g. "Date: Mar 6 <b>Be You.</b>").
+        node = label_bolds[-1].next_sibling
+        while node is not None:
+            if isinstance(node, Tag) and node.name == "br":
+                break  # already separated
+            if isinstance(node, Tag) and node.name in ("b", "strong") and not _is_label_bold(node):
+                node.insert_before(soup.new_tag("br"))
+                break
+            node = node.next_sibling
 
     _process_container(body)
     for p in list(body.find_all("p")):
