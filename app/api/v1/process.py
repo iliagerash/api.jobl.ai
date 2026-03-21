@@ -67,13 +67,14 @@ def _extract_application_email(text: str) -> str | None:
         if _EXCLUDE_LOCAL_PART_RE.search(local_part):
             continue
         # Strong local-part signal (careers@, hr@, recruiter@, etc.): return immediately,
-        # but only if accommodation/disability keywords aren't within 200 chars — which
-        # would indicate the email itself is an accommodation contact, not an apply address
-        # (e.g. "please contact myworkdayrecruitment@gflenv.com for accommodation").
+        # but only if accommodation/disability keywords aren't in the 200 chars BEFORE
+        # the email (indicating it is an accommodation contact rather than an apply
+        # address, e.g. "contact myworkdayrecruitment@gflenv.com for accommodation").
+        # We only look backward — company boilerplate after the email (e.g. "disability
+        # services provider") must not suppress a valid recruitment address.
         if _LOCAL_PART_RE.search(local_part):
             narrow_start = max(0, m.start() - 200)
-            narrow_end = min(len(text), m.end() + 200)
-            if not _EXCLUDE_KEYWORDS_RE.search(text[narrow_start:narrow_end]):
+            if not _EXCLUDE_KEYWORDS_RE.search(text[narrow_start:m.end()]):
                 return m.group(0)
         start = max(0, m.start() - _CONTEXT_WINDOW)
         end = min(len(text), m.end() + _CONTEXT_WINDOW)
@@ -149,9 +150,14 @@ def process(body: ProcessRequest, request: Request) -> ProcessResponse:
     raw_expiry = extract_expiry_raw(body.description)
     expiry_date: str | None = raw_expiry.isoformat() if raw_expiry else None
 
-    # 5. Extract application email and mask it in HTML
-    plain_text = BeautifulSoup(clean_result.html, "lxml").get_text(separator=" ")
-    application_email: str | None = _extract_application_email(plain_text)
+    # 5. Extract application email and mask it in HTML.
+    # Primary: explicit hl-email marker placed by the scraper.
+    hl_email_tag = BeautifulSoup(body.description, "lxml").find("span", class_="hl-email")
+    if hl_email_tag and _EMAIL_RE.fullmatch(hl_email_tag.get_text(strip=True)):
+        application_email: str | None = hl_email_tag.get_text(strip=True)
+    else:
+        plain_text = BeautifulSoup(clean_result.html, "lxml").get_text(separator=" ")
+        application_email = _extract_application_email(plain_text)
     description_clean = clean_result.html
     if application_email:
         description_clean = description_clean.replace(application_email, "***email_hidden***")
