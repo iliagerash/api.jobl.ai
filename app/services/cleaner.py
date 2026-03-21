@@ -294,6 +294,40 @@ def _parse_date(text: str, mm_dd_first: bool = False) -> date | None:
 
 _NUMERIC_DATE_RE = re.compile(r"(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})")
 
+# Month + ordinal day with no year, e.g. "April 12th" / "April 12"
+_PARTIAL_EN_DATE_RE = re.compile(
+    r"\b([A-Za-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?\b(?!\d)",
+    re.IGNORECASE,
+)
+
+
+def _parse_partial_date(text: str) -> date | None:
+    """Parse a month+day string with no year, inferring current or next year.
+
+    Only used as a fallback after a hard deadline label (e.g. "accepted through
+    April 12th") when the full-year parser found nothing.  Skips text that
+    already contains a 4-digit year (those should have been handled by
+    _parse_date).
+    """
+    if re.search(r"\d{4}", text):
+        return None  # year present — leave to _parse_date
+    m = _PARTIAL_EN_DATE_RE.search(text)
+    if not m:
+        return None
+    month = _EN_MONTHS.get(m.group(1).lower())
+    if not month:
+        return None
+    day = int(m.group(2))
+    today = date.today()
+    for year in (today.year, today.year + 1):
+        try:
+            d = date(year, month, day)
+            if d >= today:
+                return d
+        except ValueError:
+            pass
+    return None
+
 
 def _detect_mm_dd(text: str) -> bool:
     """Return True if unambiguous numeric dates in text use MM/DD format.
@@ -328,19 +362,20 @@ def _extract_expiry_from_text(full_text: str) -> date | None:
             if after:
                 if _OPEN_ENDED_RE.match(after):
                     return None
-                d = _parse_date(after, mm_dd)
+                d = _parse_date(after, mm_dd) or _parse_partial_date(after)
                 if d is not None:
                     return d
             if i + 1 < len(lines):
                 nxt = lines[i + 1]
                 if _OPEN_ENDED_RE.match(nxt):
                     return None
-                d = _parse_date(nxt, mm_dd)
+                d = _parse_date(nxt, mm_dd) or _parse_partial_date(nxt)
                 if d is not None:
                     return d
                 # Date may span two lines, e.g. "Friday," + "March 6, 2026"
                 if i + 2 < len(lines):
-                    d = _parse_date(nxt + " " + lines[i + 2], mm_dd)
+                    combined = nxt + " " + lines[i + 2]
+                    d = _parse_date(combined, mm_dd) or _parse_partial_date(combined)
                     if d is not None:
                         return d
 
@@ -397,14 +432,19 @@ def _extract_expiry_from_text(full_text: str) -> date | None:
 # Label patterns that identify a start/availability date or a weak consideration
 # date (not a hard deadline) — used to classify hl-date spans as low-priority.
 _START_DATE_CONTEXT_RE = re.compile(
-    r"start\s+date|start(?:ing)?\s*(?:date)?|available\s+(?:from|date)?|date\s+de\s+d[eé]but|disponible\s+(?:le|à\s+partir)|full\s+consideration(?:\s+date)?",
+    r"start\s+date|start(?:ing)?\s*(?:date)?|available\s+(?:from|date)?"
+    r"|date\s+de\s+d[eé]but|disponible\s+(?:le|à\s+partir)"
+    r"|full\s+consideration(?:\s+date)?"
+    r"|begin(?:ning)?\s+on|end(?:ing)?\s+on|start(?:s)?\s+on",
     re.IGNORECASE,
 )
 
 # Label patterns for a job start date or a weak consideration date in plain text.
 _START_DATE_LABEL_RE = re.compile(
     r"""
-    (?:start\s+date|starting\s+date?|date\s+de\s+d[eé]but|full\s+consideration(?:\s+date)?)
+    (?:start\s+date|starting\s+date?|date\s+de\s+d[eé]but
+      |full\s+consideration(?:\s+date)?
+      |begin(?:ning)?\s+on|end(?:ing)?\s+on|start(?:s)?\s+on)
     \s*:?\s*
     """,
     re.IGNORECASE | re.VERBOSE,
