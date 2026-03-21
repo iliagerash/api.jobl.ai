@@ -37,11 +37,12 @@ _EXCLUDE_KEYWORDS_RE = re.compile(
     r"|mesures?.{0,20}d.adaptation|adaptation"
     r"|accessibilité|personnes?.{0,20}handicapées?"
     r"|aboriginal|torres\s+strait|indigenous|first\s+nations|koori\w*"
+    r"|fraud|scam|legitimacy|phishing|spoofing|impersonat"
     r")\b",
     re.IGNORECASE,
 )
 _EXCLUDE_LOCAL_PART_RE = re.compile(
-    r"accommodat|accessibl|disability|disabilities|noreply|no.reply|donotreply|do.not.reply|support|helpdesk|help.desk",
+    r"accommodat|accessibl|disability|disabilities|noreply|no.reply|donotreply|do.not.reply|support|helpdesk|help.desk|fraud|scam",
     re.IGNORECASE,
 )
 _CONTEXT_WINDOW = 350  # characters around the email to search for keywords
@@ -65,10 +66,15 @@ def _extract_application_email(text: str) -> str | None:
         local_part = m.group(0).split("@")[0]
         if _EXCLUDE_LOCAL_PART_RE.search(local_part):
             continue
-        # Strong local-part signal (careers@, hr@, recruiter@, etc.): return immediately
-        # without context filtering so nearby disability/accommodation text doesn't block it.
+        # Strong local-part signal (careers@, hr@, recruiter@, etc.): return immediately,
+        # but only if accommodation/disability keywords aren't within 200 chars — which
+        # would indicate the email itself is an accommodation contact, not an apply address
+        # (e.g. "please contact myworkdayrecruitment@gflenv.com for accommodation").
         if _LOCAL_PART_RE.search(local_part):
-            return m.group(0)
+            narrow_start = max(0, m.start() - 200)
+            narrow_end = min(len(text), m.end() + 200)
+            if not _EXCLUDE_KEYWORDS_RE.search(text[narrow_start:narrow_end]):
+                return m.group(0)
         start = max(0, m.start() - _CONTEXT_WINDOW)
         end = min(len(text), m.end() + _CONTEXT_WINDOW)
         context = text[start:end]

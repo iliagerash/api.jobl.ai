@@ -131,6 +131,7 @@ _DEADLINE_LABEL_RE = re.compile(
       | (?:position|job|work)\s+start\s+date
       | (?:hired|offered)\b.{0,120}(?:between|from)\b.{0,120}\band\b
       | open\s+until
+      | posted\s+until
       | date\s+limite\s+(?:pour\s+)?(?:postuler|de\s+candidature)?
       | date\s+de\s+(?:cl[oô]ture|fermeture)
       | date\s+d[''\u2019]affichage\b
