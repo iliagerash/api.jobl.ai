@@ -60,7 +60,7 @@ import re
 import urllib.parse
 from dataclasses import dataclass
 from datetime import date
-from typing import Literal
+from typing import Any, Literal
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 
@@ -569,6 +569,48 @@ def _promote_standalone_bold(soup: BeautifulSoup, body: Tag) -> None:
             h3 = soup.new_tag("h3")
             h3.string = text.rstrip(":").strip()
             parent.replace_with(h3)
+
+
+def _split_label_bold_rows(body: Tag, soup: BeautifulSoup) -> None:
+    """Insert <br> before consecutive <b>Label:</b> metadata rows that lack separators.
+
+    Fixes ATS-generated blocks where metadata fields are output as bare inline
+    elements with no block-level separator between them, e.g.:
+        <b>Work Arrangement:</b> Hybrid <b>Requisition Number:</b> 123 …
+    lxml auto-wraps these into one <p>, so no <br> → all fields on one line.
+
+    Only triggers when 2+ label-bolds appear in the same container so that a
+    single inline "<b>Note:</b> see below" is left alone.
+    """
+
+    def _is_label_bold(node: Any) -> bool:
+        if not (isinstance(node, Tag) and node.name in ("b", "strong")):
+            return False
+        text = node.get_text(strip=True)
+        return text.endswith(":") and 1 <= len(text.split()) <= 5
+
+    def _has_preceding_content(tag: Tag) -> bool:
+        """Return True if tag is preceded by non-whitespace content that is NOT a <br>."""
+        prev = tag.previous_sibling
+        while isinstance(prev, NavigableString) and not prev.strip():
+            prev = prev.previous_sibling
+        if prev is None:
+            return False
+        if isinstance(prev, Tag) and prev.name == "br":
+            return False  # already separated
+        return True
+
+    def _process_container(container: Tag) -> None:
+        label_bolds = [c for c in list(container.children) if _is_label_bold(c)]
+        if len(label_bolds) < 2:
+            return
+        for lb in label_bolds:
+            if _has_preceding_content(lb):
+                lb.insert_before(soup.new_tag("br"))
+
+    _process_container(body)
+    for p in list(body.find_all("p")):
+        _process_container(p)
 
 
 def _wrap_orphan_lis(body: Tag, soup: BeautifulSoup) -> None:
@@ -1098,6 +1140,7 @@ def _build_clean_html(raw_html: str) -> str:
     _merge_consecutive_bold(body)
     _promote_standalone_bold(soup, body)
     _wrap_orphan_lis(body, soup)
+    _split_label_bold_rows(body, soup)
     _collapse_brs(body, soup)
     _split_p_on_blank_lines(body, soup)
     _promote_leading_bold_in_p(soup, body)
