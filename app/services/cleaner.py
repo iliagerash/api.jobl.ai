@@ -450,17 +450,23 @@ def _extract_expiry_from_text(full_text: str) -> date | None:
                 if d is not None:
                     return d
 
-        # Bare "by" line — get_text(separator="\n") can split "...by <date>" across
-        # lines when the date is in a separate inline element (e.g. <span class="hl-date">).
-        # Only trigger when recent preceding lines contain submission context.
-        if re.search(r'^\s*by\s*$', line, re.IGNORECASE) and i + 1 < len(lines):
+        # "by" alone OR at start of line ("by March 27, 2026...") —
+        # get_text(separator="\n") can produce either form depending on whether
+        # the date is in a separate inline element (<span class="hl-date">) or
+        # plain text.  Only trigger when recent preceding lines contain
+        # submission context.
+        m_by = re.match(r'^\s*by\s*(.*)', line, re.IGNORECASE)
+        if m_by:
             prev_ctx = " ".join(lines[max(0, i - 3):i])
             if re.search(
                 r'\bsubmit|send\b.{0,20}\bresume|apply\b|application\b|candidature\b',
                 prev_ctx,
                 re.IGNORECASE,
             ):
-                d = _parse_date(lines[i + 1], mm_dd) or _parse_partial_date(lines[i + 1])
+                rest = m_by.group(1).strip()
+                d = (_parse_date(rest, mm_dd) or _parse_partial_date(rest)) if rest else None
+                if d is None and i + 1 < len(lines):
+                    d = _parse_date(lines[i + 1], mm_dd) or _parse_partial_date(lines[i + 1])
                 if d is not None:
                     return d
 
