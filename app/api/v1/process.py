@@ -37,10 +37,12 @@ _EXCLUDE_KEYWORDS_RE = re.compile(
     r"|mesures?.{0,20}d.adaptation|adaptation"
     r"|accessibilité|personnes?.{0,20}handicapées?"
     r"|aboriginal|torres\s+strait|indigenous|first\s+nations|koori\w*"
-    r"|fraud|scam|legitimacy|authenticity|phishing|spoofing|impersonat"
-    r"|gdpr|ccpa"
+    r"|fraud|scam|suspicious|legitimacy|authenticity|phishing|spoofing|impersonat"
+    r"|gdpr|ccpa|\baedt\b"
     r"|your\s+(?:personal\s+)?data\s+(?:is|are|may\s+be)\s+process\w*"
     r"|data\s+protection\s+(?:officer|law|regulation|act|policy)"
+    r"|data\s+retention"
+    r"|local\s+law\s+\d+"
     r"|privacy\s+(?:notice|policy|statement)"
     r")\b",
     re.IGNORECASE,
