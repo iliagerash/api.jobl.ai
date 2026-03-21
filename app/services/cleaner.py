@@ -623,6 +623,43 @@ def _split_label_bold_rows(body: Tag, soup: BeautifulSoup) -> None:
         _process_container(p)
 
 
+def _split_trailing_section_from_label_para(body: Tag, soup: BeautifulSoup) -> None:
+    """Split <p> elements that open with a label-bold but contain a non-label bold later.
+
+    After _collapse_brs, catches cases like:
+        <p><b>Date:</b>Mar 6, 2026<b>Be You.</b>At Duke…</p>
+    and splits at the non-label bold boundary.
+    """
+
+    def _is_label_bold(node: Any) -> bool:
+        if not (isinstance(node, Tag) and node.name in ("b", "strong")):
+            return False
+        text = node.get_text(strip=True)
+        return text.endswith(":") and 1 <= len(text.split()) <= 5
+
+    for p in list(body.find_all("p")):
+        children = list(p.children)
+        # Paragraph must start with a label-bold
+        first_real = next(
+            (c for c in children if not (isinstance(c, NavigableString) and not c.strip())),
+            None,
+        )
+        if not (first_real and _is_label_bold(first_real)):
+            continue
+        # Find first non-label bold anywhere after the opening label-bold
+        past_first = False
+        for child in children:
+            if child is first_real:
+                past_first = True
+                continue
+            if not past_first:
+                continue
+            if isinstance(child, Tag) and child.name in ("b", "strong") and not _is_label_bold(child):
+                child.insert_before(soup.new_tag("br"))
+                _split_p_on_brs(p, soup)
+                break
+
+
 def _wrap_orphan_lis(body: Tag, soup: BeautifulSoup) -> None:
     """Wrap <li> elements that are direct body children in a <ul>.
 
@@ -1152,6 +1189,7 @@ def _build_clean_html(raw_html: str) -> str:
     _wrap_orphan_lis(body, soup)
     _split_label_bold_rows(body, soup)
     _collapse_brs(body, soup)
+    _split_trailing_section_from_label_para(body, soup)
     _split_p_on_blank_lines(body, soup)
     _promote_leading_bold_in_p(soup, body)
     _fix_h3_in_p(body)
