@@ -71,7 +71,12 @@ def generate_html(rows: list[dict], stats: dict, total_ms: float) -> str:
             </tr>"""
             continue
 
-        cat_out = data["category"]["title"] if data.get("category") else ""
+        cat = data.get("category")
+        if cat:
+            conf = cat.get("confidence")
+            cat_out = f"{cat['title']} ({conf:.0%})" if conf is not None else cat["title"]
+        else:
+            cat_out = ""
 
         job_rows_html += f"""
         <tr class="job-header">
@@ -155,6 +160,12 @@ def generate_html(rows: list[dict], stats: dict, total_ms: float) -> str:
 </html>"""
 
 
+def _fmt_category(cat: dict) -> str:
+    conf = cat.get("confidence")
+    label = cat["title"][:30]
+    return f"{label} ({conf:.0%})" if conf is not None else label
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Test /v1/process against random DB jobs")
     parser.add_argument("--limit", type=int, required=True, help="Number of random jobs to test")
@@ -202,7 +213,7 @@ def main() -> None:
                         f"{job['title'][:80]!r} -> {data['title_normalized'][:80]!r} | "
                         f"email={'✓' if has_email else '✗'} "
                         f"expiry={'✓' if has_expiry else '✗'} "
-                        f"category={data['category']['title'][:30] if has_category else '✗'}"
+                        f"category={_fmt_category(data['category']) if has_category else '✗'}"
                     )
                 else:
                     stats["error"] += 1

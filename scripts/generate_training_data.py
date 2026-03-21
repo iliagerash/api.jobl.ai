@@ -68,7 +68,7 @@ def main() -> None:
     try:
         rows = db.execute(
             text("""
-                SELECT title, title_clean, original_category,
+                SELECT title, original_category,
                        description_clean, category_id
                 FROM job_labelling
                 ORDER BY category_id, id
@@ -83,10 +83,10 @@ def main() -> None:
     with open(out_path, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
         writer.writerow(["title", "original_category", "description_plaintext", "category_id"])
-        for title, title_clean, original_category, description_clean, category_id in rows:
-            effective_title = title_clean or title or ""
+        for title, original_category, description_clean, category_id in rows:
+            effective_title = title or ""
             desc_plain = _strip_html(description_clean or "")
-            writer.writerow([effective_title, original_category or "", desc_plain[:1000], category_id])
+            writer.writerow([effective_title, original_category or "", desc_plain, category_id])
 
     print(f"Wrote {len(rows)} rows to {out_path}")
 

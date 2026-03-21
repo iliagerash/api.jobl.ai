@@ -19,6 +19,7 @@ Includes a background sync worker that pulls jobs from MySQL source databases in
 - [Running Locally](#running-locally)
 - [Migrations](#migrations)
 - [Categorizer Training](#categorizer-training)
+  - [Hyperparameter Tuning](#2a-tune-hyperparameters-optional)
 - [Manual Labelling](#manual-labelling)
 - [Sync Worker](#sync-worker)
 - [Production Deployment](#production-deployment)
@@ -88,7 +89,8 @@ api.jobl.ai/
 │   ├── extract_labelling_data.py           # Populate job_labelling table (balanced per class)
 │   ├── evaluate_cleaner_extractor.py       # Re-run cleaner/extractor on verified rows
 │   ├── generate_training_data.py           # Training CSV from job_labelling table
-│   └── train_categorizer.py               # Train LightGBM, save .pkl artifact
+│   ├── train_categorizer.py               # Train LightGBM, save .pkl artifact
+│   └── tune_categorizer.py                # Optuna hyperparameter search for LightGBM
 ├── sql/
 │   ├── seed_categories.sql      # 26 category rows
 │   ├── seed_countries.sql
@@ -132,7 +134,8 @@ api.jobl.ai/
   "expiry_date": "2026-04-30",
   "category": {
     "id": 4,
-    "title": "Information Technology"
+    "title": "Information Technology",
+    "confidence": 0.872
   }
 }
 ```
@@ -143,9 +146,11 @@ api.jobl.ai/
 | `description_clean` | string | Cleaned HTML; email replaced with `***email_hidden***` |
 | `application_email` | string \| null | Extracted email, or null |
 | `expiry_date` | string \| null | ISO date (YYYY-MM-DD), or null if not found / non-EN/FR |
-| `category` | object \| null | `{id, title}` from categories table; null if model not loaded |
+| `category` | object \| null | `{id, title, confidence}` — null if model not loaded |
 
-For non-EN/FR jobs, `category` is `{"id": null, "title": "<original_category>"}` if `original_category` was provided.
+`category.confidence` is the model's softmax probability for the predicted class (0–1). It is `null` for non-EN/FR jobs where the model is not run.
+
+For non-EN/FR jobs, `category` is `{"id": null, "title": "<original_category>", "confidence": null}` if `original_category` was provided.
 
 ---
 
@@ -251,11 +256,13 @@ The first accepted email is returned as `application_email`; all occurrences are
 
 ### 5. Categorization (EN/FR only)
 
-`app/services/categorizer.py` wraps a pickled sklearn `Pipeline` (TF-IDF → LGBMClassifier) trained to classify into 26 categories.
+`app/services/categorizer.py` wraps a pickled artifact (TF-IDF vectorizer + native LightGBM booster) trained to classify into 26 categories.
 
-Input text: `f"{title} {original_category or ''} {description_plain[:1000]}"`
+Input text: `f"{title} {title} {title} {description_plain}"` — the raw title is repeated 3× to amplify its signal relative to the full description.
 
-Returns `{"id": N, "title": "..."}`. Returns `None` when `CATEGORIZER_MODEL_PATH` is not set.
+The raw (un-normalized) `title` from the request is used so that training and inference operate on identical input distributions.
+
+Returns `{"id": N, "title": "...", "confidence": 0.xx}` where `confidence` is the softmax probability of the winning class. Returns `None` when `CATEGORIZER_MODEL_PATH` is not set.
 
 ---
 
@@ -328,6 +335,7 @@ psql $DATABASE_URL -c "\copy category_map (original_category, category_id) FROM 
 |---|---|---|
 | Production | `pip install -e .` | API, sync worker, training scripts, test endpoint script |
 | Development | `pip install -e ".[dev]"` | Production + pytest |
+| Scripts | `pip install -e ".[scripts]"` | Production + optuna (required for `tune_categorizer.py`) |
 
 ---
 
@@ -426,7 +434,7 @@ alembic revision --autogenerate -m "describe change"
 
 ### 1. Generate training data
 
-Exports all rows from the `job_labelling` table (all 26 categories) to a training CSV.
+Exports all rows from the `job_labelling` table (all 26 categories) to a training CSV. The raw `title` column is used (not the normalized title) so that training and inference see identical input distributions.
 
 ```bash
 python scripts/generate_training_data.py --output data/
@@ -451,6 +459,8 @@ python scripts/train_categorizer.py \
 
 Pipeline: `TfidfVectorizer(max_features=20_000, ngram_range=(1,2), min_df=5, sublinear_tf=True)` → native `lgb.train()` with multiclass objective and early stopping.
 
+The title is repeated 3× in the input text (`"{title} {title} {title} {description}"`) to amplify its signal relative to the full description, matching inference-time behaviour. The full description is used — no truncation.
+
 Artifact format:
 ```python
 {
@@ -461,13 +471,55 @@ Artifact format:
 }
 ```
 
-Training prints validation loss every 10 rounds and stops automatically when it stops improving:
+Training prints validation loss every 10 rounds, stops automatically when it stops improving, then prints a per-class classification report:
+
 ```
 [10]    val's multi_logloss: 0.761
 [20]    val's multi_logloss: 0.610
 Early stopping, best iteration is:
 [23]    val's multi_logloss: 0.608
+
+Evaluating on validation set ...
+                                    precision    recall  f1-score   support
+
+  Manufacturing & Industrial Prod.      0.923     0.900     0.911        40
+                        Automotive      0.971     0.971     0.971        35
+  ...
+                         macro avg      0.924     0.918     0.921       480
+                      weighted avg      0.927     0.921     0.924       480
 ```
+
+### 2a. Tune hyperparameters (optional)
+
+Run before training to find better LightGBM params via Optuna. Requires the `scripts` dependency scope.
+
+```bash
+pip install -e ".[scripts]"
+
+python scripts/tune_categorizer.py \
+  --data data/categorizer_training.csv \
+  --n-trials 50
+```
+
+Uses the same text vectorization and train/val split as `train_categorizer.py`. Each trial varies `num_leaves`, `learning_rate`, `min_data_in_leaf`, `lambda_l1`, `lambda_l2`, `feature_fraction`, `bagging_fraction`, and `bagging_freq`.
+
+Output:
+```
+Running 50 trials ...
+
+Best validation accuracy: 0.9312
+Best params (paste into train_categorizer.py):
+    params = {
+        "objective": "multiclass",
+        "num_class": 26,
+        "metric": "multi_logloss",
+        "num_leaves": 127,
+        "learning_rate": 0.047312,
+        ...
+    }
+```
+
+Paste the printed `params` dict into `train_categorizer.py`, then retrain.
 
 ### 3. Activate the model
 

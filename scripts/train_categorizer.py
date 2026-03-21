@@ -36,6 +36,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.metrics import classification_report
 from sklearn.model_selection import train_test_split
 import lightgbm as lgb
 
@@ -44,8 +45,8 @@ from scripts.generate_training_data import CATEGORIES
 
 def build_text(row: pd.Series) -> str:
     title = str(row.get("title") or "")
-    description = str(row.get("description_plaintext") or "")[:1000]
-    return f"{title} {description}"
+    description = str(row.get("description_plaintext") or "")
+    return f"{title} {title} {title} {description}"
 
 
 def main() -> None:
@@ -123,6 +124,12 @@ def main() -> None:
         ],
     )
     print(f"  Best iteration: {booster.best_iteration}", flush=True)
+
+    print("\nEvaluating on validation set ...", flush=True)
+    y_val_probs = booster.predict(X_val)
+    y_val_pred = np.argmax(y_val_probs, axis=1)
+    category_names = [title for _, title in CATEGORIES]
+    print(classification_report(y_val, y_val_pred, target_names=category_names, digits=3))
 
     os.makedirs(os.path.dirname(args.output) or ".", exist_ok=True)
     with open(args.output, "wb") as f:

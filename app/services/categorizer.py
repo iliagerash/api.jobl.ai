@@ -24,8 +24,9 @@ class JobCategorizer:
         return self._ready
 
     def predict(self, title: str, desc_plain: str) -> dict:
-        text = f"{title} {desc_plain[:1000]}"
+        text = f"{title} {title} {title} {desc_plain}"
         X = self._tfidf.transform([text])
         probs = self._booster.predict(X)           # shape (1, num_classes)
         pred_class = int(np.argmax(probs[0]))      # 0-based
-        return self._id_to_category[pred_class + 1]  # back to 1-based id
+        confidence = float(probs[0][pred_class])
+        return {**self._id_to_category[pred_class + 1], "confidence": confidence}

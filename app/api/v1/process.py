@@ -109,6 +109,7 @@ class ProcessRequest(BaseModel):
 class CategoryOut(BaseModel):
     id: int | None
     title: str
+    confidence: float | None = None
 
 
 class ProcessResponse(BaseModel):
@@ -200,8 +201,8 @@ def process(body: ProcessRequest, request: Request) -> ProcessResponse:
     if categorizer and categorizer.is_ready():
         try:
             desc_plain = BeautifulSoup(description_clean, "lxml").get_text()
-            cat = categorizer.predict(title_normalized, desc_plain)
-            category = CategoryOut(id=cat["id"], title=cat["title"])
+            cat = categorizer.predict(body.title, desc_plain)
+            category = CategoryOut(id=cat["id"], title=cat["title"], confidence=cat.get("confidence"))
         except Exception:
             logger.exception("categorizer.predict failed")
 
