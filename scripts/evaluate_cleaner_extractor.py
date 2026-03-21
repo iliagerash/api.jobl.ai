@@ -27,7 +27,12 @@ from sqlalchemy import text
 
 from app.db.session import SessionLocal
 from app.services.cleaner import clean_job_description, extract_expiry_raw
-from app.api.v1.process import _extract_application_email
+from app.api.v1.process import (
+    _EMAIL_RE,
+    _EXCLUDE_KEYWORDS_RE,
+    _EXCLUDE_LOCAL_PART_RE,
+    _extract_application_email,
+)
 
 
 def main() -> None:
@@ -77,7 +82,23 @@ def main() -> None:
                 new_desc_clean = clean_result.html
 
                 plain_text = BeautifulSoup(new_desc_clean, "lxml").get_text(separator=" ")
-                new_email = _extract_application_email(plain_text)
+                # Mirror the endpoint: prefer hl-email spans from the raw description,
+                # fall back to keyword-based text extraction on the cleaned plain text.
+                new_email: str | None = None
+                raw_soup = BeautifulSoup(desc, "lxml")
+                for hl_tag in raw_soup.find_all("span", class_="hl-email"):
+                    candidate = hl_tag.get_text(strip=True)
+                    if not _EMAIL_RE.fullmatch(candidate):
+                        continue
+                    local_part = candidate.split("@")[0]
+                    if _EXCLUDE_LOCAL_PART_RE.search(local_part):
+                        continue
+                    container_text = (hl_tag.parent or hl_tag).get_text()
+                    if not _EXCLUDE_KEYWORDS_RE.search(container_text):
+                        new_email = candidate
+                        break
+                if new_email is None:
+                    new_email = _extract_application_email(plain_text)
 
                 raw_expiry = extract_expiry_raw(desc)
                 new_expiry = raw_expiry.isoformat() if raw_expiry else None

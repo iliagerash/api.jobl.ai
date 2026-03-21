@@ -23,7 +23,7 @@ _APPLY_KEYWORDS_RE = re.compile(
     r"|send.{0,30}(resume|cv|application|candidature)"
     r"|email.{0,30}(resume|cv|application|candidature)"
     r"|resume|curriculum vitae|\bcv\b|cover.?letter"
-    r"|contact|staffing|recruit\w*|inquir\w*|emailing"
+    r"|contact|staffing|recruit\w*|inquir\w*|emailing|reach\s+out|more\s+information|learn\s+more"
     r"|postuler|appliquer|candidature|soumettre|envoyer.{0,30}(cv|candidature|courriel)"
     r"|faire.{0,10}demande"
     r")\b",
