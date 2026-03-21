@@ -429,20 +429,23 @@ def _is_section_header(text: str) -> bool:
     return True
 
 
-_BLOCK_LAYOUT_TAGS = {"div", "section", "article", "aside", "header", "footer", "main", "nav"}
+_BLOCK_LAYOUT_TAGS = {"div", "section", "article", "aside", "header", "footer", "main", "nav", "tr"}
 
 
 def _mark_block_layout_boundaries(body: Tag, soup: BeautifulSoup) -> None:
-    """Append a <br> to each block-level layout element that is a direct body child.
+    """Append a <br> to block-level layout elements that are followed by a sibling
+    of the same kind (div/tr/section rows).
 
     Called before _unwrap_layout_tags so that the visual row/section boundaries
-    imposed by <div> etc. survive as line-break separators after unwrapping.
-    Without this, consecutive <div> rows (e.g. ATS metadata tables) collapse into
-    one paragraph because _split_on_brs has nothing to split on.
+    survive as line-break separators after unwrapping. Targets only elements with
+    a following block-layout sibling so lone wrapper divs don't gain spurious breaks.
     """
-    for child in list(body.children):
-        if isinstance(child, Tag) and child.name in _BLOCK_LAYOUT_TAGS:
-            child.append(soup.new_tag("br"))
+    for tag in body.find_all(_BLOCK_LAYOUT_TAGS):
+        nxt = tag.next_sibling
+        while isinstance(nxt, NavigableString) and not nxt.strip():
+            nxt = nxt.next_sibling
+        if isinstance(nxt, Tag) and nxt.name in _BLOCK_LAYOUT_TAGS:
+            tag.append(soup.new_tag("br"))
 
 
 def _unwrap_layout_tags(body: Tag) -> None:
