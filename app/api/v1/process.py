@@ -151,12 +151,25 @@ def process(body: ProcessRequest, request: Request) -> ProcessResponse:
     expiry_date: str | None = raw_expiry.isoformat() if raw_expiry else None
 
     # 5. Extract application email and mask it in HTML.
-    # Primary: explicit hl-email marker placed by the scraper.
-    hl_email_tag = BeautifulSoup(body.description, "lxml").find("span", class_="hl-email")
+    # Primary: explicit hl-email marker placed by the scraper — but still apply
+    # exclusion checks using the containing paragraph's text so that accommodation/
+    # compliance emails (e.g. "if you have a disability ... email hr@company.com")
+    # are not mistaken for application addresses.
+    plain_text = BeautifulSoup(clean_result.html, "lxml").get_text(separator=" ")
+    raw_soup = BeautifulSoup(body.description, "lxml")
+    hl_email_tag = raw_soup.find("span", class_="hl-email")
     if hl_email_tag and _EMAIL_RE.fullmatch(hl_email_tag.get_text(strip=True)):
-        application_email: str | None = hl_email_tag.get_text(strip=True)
+        candidate = hl_email_tag.get_text(strip=True)
+        local_part = candidate.split("@")[0]
+        container_text = (hl_email_tag.parent or hl_email_tag).get_text()
+        if (
+            not _EXCLUDE_LOCAL_PART_RE.search(local_part)
+            and not _EXCLUDE_KEYWORDS_RE.search(container_text)
+        ):
+            application_email: str | None = candidate
+        else:
+            application_email = _extract_application_email(plain_text)
     else:
-        plain_text = BeautifulSoup(clean_result.html, "lxml").get_text(separator=" ")
         application_email = _extract_application_email(plain_text)
     description_clean = clean_result.html
     if application_email:
