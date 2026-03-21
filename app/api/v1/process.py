@@ -44,11 +44,13 @@ _EXCLUDE_KEYWORDS_RE = re.compile(
     r"|data\s+retention"
     r"|local\s+law\s+\d+"
     r"|privacy\s+(?:notice|policy|statement)"
+    r"|equal\s+employment\s+opportunity"
+    r"|institutional\s+equity"
     r")\b",
     re.IGNORECASE,
 )
 _EXCLUDE_LOCAL_PART_RE = re.compile(
-    r"accommodat|accessib|disability|disabilities|compliance|noreply|no.reply|donotreply|do.not.reply|support|helpdesk|help.desk|fraud|scam",
+    r"accommodat|accessib|disability|disabilities|compliance|noreply|no.reply|donotreply|do.not.reply|(?:^|[._-])support|helpdesk|help.desk|fraud|scam|\beeo\b",
     re.IGNORECASE,
 )
 _CONTEXT_WINDOW = 250  # characters around the email to search for keywords

@@ -143,6 +143,8 @@ _DEADLINE_LABEL_RE = re.compile(
       | avant\s+le
       | candidatures?\s+re[cç]ues?\s+jusqu(?:[''\u2019]|\s+)au
       | fermeture\s+du\s+concours
+      | [eé]ch[eé]ance\s+(?:de\s+l[''\u2019]affichage\b)?
+      | au\s+plus\s+tard\s+le
       | (?:cette\s+offre\s+)?expirer[a]?\s+le
       | offre\s+(?:se\s+termine|valide\s+jusqu(?:[''\u2019]|\s+)au)
     )
@@ -438,7 +440,8 @@ _START_DATE_CONTEXT_RE = re.compile(
     r"|date\s+de\s+d[eé]but|disponible\s+(?:le|à\s+partir)"
     r"|full\s+consideration(?:\s+date)?"
     r"|begin(?:ning)?\s+on|end(?:ing)?\s+on|start(?:s)?\s+on"
-    r"|term\s+(?:start|end)",
+    r"|term\s+(?:start|end)"
+    r"|entr[eé]e?\s+en\s+fonction",
     re.IGNORECASE,
 )
 
@@ -448,7 +451,8 @@ _START_DATE_LABEL_RE = re.compile(
     (?:start\s+date|starting\s+date?|date\s+de\s+d[eé]but
       |full\s+consideration(?:\s+date)?
       |begin(?:ning)?\s+on|end(?:ing)?\s+on|start(?:s)?\s+on
-      |term\s+(?:start|end))
+      |term\s+(?:start|end)
+      |date\s+d[''\u2019]entr[eé]e\s+en\s+fonction)
     \s*:?\s*
     """,
     re.IGNORECASE | re.VERBOSE,
@@ -456,7 +460,13 @@ _START_DATE_LABEL_RE = re.compile(
 
 
 def _hl_date_is_start_date(tag: Tag) -> bool:
-    """Return True if an hl-date span is labelled as a job start date."""
+    """Return True if an hl-date span is labelled as a job start date.
+
+    Checks preceding siblings within the same parent first.  When the span is
+    the sole content of its parent (e.g. <p><span class="hl-date">…</span></p>)
+    and has no preceding siblings, falls back to the label in the immediately
+    preceding sibling of the parent element (typically an <h3> heading).
+    """
     prev = tag.previous_sibling
     while prev is not None:
         if isinstance(prev, NavigableString):
@@ -468,6 +478,14 @@ def _hl_date_is_start_date(tag: Tag) -> bool:
             return bool(_START_DATE_CONTEXT_RE.search(prev.get_text()))
         else:
             break
+    # Span has no preceding text context within its parent — look at the
+    # immediately preceding sibling of the parent (e.g. <h3>Date d'entrée en
+    # fonction</h3> before <p><span class="hl-date">…</span></p>).
+    parent = tag.parent
+    if parent is not None:
+        prev_sib = parent.find_previous_sibling(True)
+        if prev_sib is not None:
+            return bool(_START_DATE_CONTEXT_RE.search(prev_sib.get_text()))
     return False
 
 
