@@ -38,6 +38,10 @@ _EXCLUDE_KEYWORDS_RE = re.compile(
     r"|accessibilité|personnes?.{0,20}handicapées?"
     r"|aboriginal|torres\s+strait|indigenous|first\s+nations|koori\w*"
     r"|fraud|scam|legitimacy|authenticity|phishing|spoofing|impersonat"
+    r"|gdpr|ccpa"
+    r"|your\s+(?:personal\s+)?data\s+(?:is|are|may\s+be)\s+process\w*"
+    r"|data\s+protection\s+(?:officer|law|regulation|act|policy)"
+    r"|privacy\s+(?:notice|policy|statement)"
     r")\b",
     re.IGNORECASE,
 )
@@ -74,11 +78,12 @@ def _extract_application_email(text: str) -> str | None:
         # services provider") must not suppress a valid recruitment address.
         if _LOCAL_PART_RE.search(local_part):
             narrow_start = max(0, m.start() - 200)
-            if not _EXCLUDE_KEYWORDS_RE.search(text[narrow_start:m.end()]):
+            narrow = _EMAIL_RE.sub("", text[narrow_start:m.end()])
+            if not _EXCLUDE_KEYWORDS_RE.search(narrow):
                 return m.group(0)
         start = max(0, m.start() - _CONTEXT_WINDOW)
         end = min(len(text), m.end() + _CONTEXT_WINDOW)
-        context = text[start:end]
+        context = _EMAIL_RE.sub("", text[start:end])
         if _EXCLUDE_KEYWORDS_RE.search(context):
             continue
         if _APPLY_KEYWORDS_RE.search(context):
@@ -151,25 +156,25 @@ def process(body: ProcessRequest, request: Request) -> ProcessResponse:
     expiry_date: str | None = raw_expiry.isoformat() if raw_expiry else None
 
     # 5. Extract application email and mask it in HTML.
-    # Primary: explicit hl-email marker placed by the scraper — but still apply
-    # exclusion checks using the containing paragraph's text so that accommodation/
-    # compliance emails (e.g. "if you have a disability ... email hr@company.com")
-    # are not mistaken for application addresses.
+    # Primary: iterate all hl-email spans and return the first that passes
+    # exclusion checks (local-part filter + parent paragraph context).
+    # This handles multiple hl-email tags where the first may be an
+    # accommodation/compliance address that should be skipped.
     plain_text = BeautifulSoup(clean_result.html, "lxml").get_text(separator=" ")
     raw_soup = BeautifulSoup(body.description, "lxml")
-    hl_email_tag = raw_soup.find("span", class_="hl-email")
-    if hl_email_tag and _EMAIL_RE.fullmatch(hl_email_tag.get_text(strip=True)):
-        candidate = hl_email_tag.get_text(strip=True)
+    application_email: str | None = None
+    for hl_tag in raw_soup.find_all("span", class_="hl-email"):
+        candidate = hl_tag.get_text(strip=True)
+        if not _EMAIL_RE.fullmatch(candidate):
+            continue
         local_part = candidate.split("@")[0]
-        container_text = (hl_email_tag.parent or hl_email_tag).get_text()
-        if (
-            not _EXCLUDE_LOCAL_PART_RE.search(local_part)
-            and not _EXCLUDE_KEYWORDS_RE.search(container_text)
-        ):
-            application_email: str | None = candidate
-        else:
-            application_email = _extract_application_email(plain_text)
-    else:
+        if _EXCLUDE_LOCAL_PART_RE.search(local_part):
+            continue
+        container_text = (hl_tag.parent or hl_tag).get_text()
+        if not _EXCLUDE_KEYWORDS_RE.search(container_text):
+            application_email = candidate
+            break
+    if application_email is None:
         application_email = _extract_application_email(plain_text)
     description_clean = clean_result.html
     if application_email:

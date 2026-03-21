@@ -122,11 +122,11 @@ _DEADLINE_LABEL_RE = re.compile(
       | deadline
       | position\s+closes
       | apply\s+(?:by\s+date|before)
-      | posting\s+(?:closes|end\s+date)
-      | job\s+posting\s+end\s+date
+      | posting\s+(?:closes|end\s+date|expiration\s+date)
+      | job\s+posting\s+(?:end|expiration)\s+date
       | applications?\s+close
       | applications?\s+due
-      | expiry\s+date
+      | expir(?:y|ation)\s+date
       | application\s+window\b.{0,60}close\s+on
       | (?:position|job|work)\s+start\s+date
       | (?:hired|offered)\b.{0,120}(?:between|from)\b.{0,120}\band\b
@@ -394,16 +394,17 @@ def _extract_expiry_from_text(full_text: str) -> date | None:
     return None
 
 
-# Label patterns that identify a start/availability date (not a deadline).
+# Label patterns that identify a start/availability date or a weak consideration
+# date (not a hard deadline) — used to classify hl-date spans as low-priority.
 _START_DATE_CONTEXT_RE = re.compile(
-    r"start\s+date|start(?:ing)?\s*(?:date)?|available\s+(?:from|date)?|date\s+de\s+d[eé]but|disponible\s+(?:le|à\s+partir)",
+    r"start\s+date|start(?:ing)?\s*(?:date)?|available\s+(?:from|date)?|date\s+de\s+d[eé]but|disponible\s+(?:le|à\s+partir)|full\s+consideration(?:\s+date)?",
     re.IGNORECASE,
 )
 
-# Label patterns for a job start date in plain text.
+# Label patterns for a job start date or a weak consideration date in plain text.
 _START_DATE_LABEL_RE = re.compile(
     r"""
-    (?:start\s+date|starting\s+date?|date\s+de\s+d[eé]but)
+    (?:start\s+date|starting\s+date?|date\s+de\s+d[eé]but|full\s+consideration(?:\s+date)?)
     \s*:?\s*
     """,
     re.IGNORECASE | re.VERBOSE,
@@ -1172,7 +1173,7 @@ def _dedup_consecutive_h3(body: Tag) -> None:
         if (
             next_el
             and next_el.name == "h3"
-            and h3.get_text(strip=True) == next_el.get_text(strip=True)
+            and h3.get_text(strip=True).lower() == next_el.get_text(strip=True).lower()
         ):
             h3.decompose()
 
@@ -1322,10 +1323,15 @@ def _build_clean_html(raw_html: str) -> str:
     src = re.sub(r"!\*!<.*", "", src, flags=re.DOTALL)
     # Remove unfilled template placeholders like [[title]] or {{field_name}}
     src = re.sub(r"\[\[.*?\]\]|\{\{.*?\}\}", "", src)
-    # Strip bare URLs (not inside href/src attributes).
+    # Convert bare URLs (not inside href/src attributes) to <a> links so that
+    # document references (privacy notices, benefit guides, etc.) are preserved.
     # Use [^\s<>]+ instead of \S+ so HTML tags immediately following the URL
     # (e.g. https://example.com<br>) are not consumed.
-    src = re.sub(r'(?<!=")https?://[^\s<>]+', "", src)
+    src = re.sub(
+        r'(?<!=")https?://[^\s<>]+',
+        lambda m: f'<a href="{m.group(0)}">{m.group(0)}</a>',
+        src,
+    )
     src = _convert_markdown_bold(src)
     soup = BeautifulSoup(src, "lxml")
     body: Tag = soup.find("body") or soup  # type: ignore[assignment]
