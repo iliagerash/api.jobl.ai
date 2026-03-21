@@ -23,6 +23,36 @@ from sqlalchemy import text
 from app.db.session import SessionLocal
 
 
+CATEGORIES = [
+    (1,  "Manufacturing & Industrial Production"),
+    (2,  "Automotive"),
+    (3,  "Food & Beverage Manufacturing"),
+    (4,  "Information Technology"),
+    (5,  "Telecommunications & Internet"),
+    (6,  "Construction & Infrastructure"),
+    (7,  "Professional Services"),
+    (8,  "Human Resources"),
+    (9,  "Transportation & Logistics"),
+    (10, "Healthcare & Medical Services"),
+    (11, "Aerospace & Defense"),
+    (12, "Financial Services & Banking"),
+    (13, "Real Estate & Architecture"),
+    (14, "Marketing, Advertising & Media"),
+    (15, "Hospitality & Restaurants"),
+    (16, "Retail & Wholesale"),
+    (17, "Education & Training"),
+    (18, "Energy & Natural Resources"),
+    (19, "Engineering Services"),
+    (20, "Nonprofit & Government"),
+    (21, "Arts, Entertainment & Recreation"),
+    (22, "Legal Services"),
+    (23, "Science & Research"),
+    (24, "Customer Service & Support"),
+    (25, "Security & Surveillance"),
+    (26, "Other"),
+]
+
+
 def _strip_html(html: str) -> str:
     if not html:
         return ""
