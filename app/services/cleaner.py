@@ -146,7 +146,7 @@ _DEADLINE_LABEL_RE = re.compile(
       | ends\s+on
       | accepted\s+through
       | applications?\s+received\s+by
-      | last\s+application\s+date
+      | last\s+(?:day\s+to\s+apply|application\s+date)
       | date\s+limite\s+(?:pour\s+)?(?:postuler|de\s+candidature)?
       | date\s+de\s+(?:cl[oô]ture|fermeture)
       | date\s+de\s+fin\s+d[''\u2019]affichage\b
@@ -689,6 +689,8 @@ def _is_section_header(text: str) -> bool:
     if "@" in text:  # email addresses are not section headers
         return False
     if re.search(r"#\d", text):  # reference codes like #11-26 are not section headers
+        return False
+    if re.fullmatch(r"[\d\s\-\+\(\)\.x]{7,}", text):  # phone numbers are not section headers
         return False
     return True
 

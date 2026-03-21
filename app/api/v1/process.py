@@ -36,7 +36,6 @@ _EXCLUDE_KEYWORDS_RE = re.compile(
     r"|disability|disabilities|handicap"
     r"|mesures?.{0,20}d.adaptation|adaptation"
     r"|accessibilité|personnes?.{0,20}handicapées?"
-    r"|aboriginal|torres\s+strait|indigenous|first\s+nations|koori\w*"
     r"|fraud|scam|suspicious|legitimacy|authenticity|phishing|spoofing|impersonat"
     r"|gdpr|ccpa|\baedt\b|pay\s+transparency"
     r"|your\s+(?:personal\s+)?data\s+(?:is|are|may\s+be)\s+process\w*"
@@ -46,6 +45,7 @@ _EXCLUDE_KEYWORDS_RE = re.compile(
     r"|privacy\s+(?:notice|policy|statement)"
     r"|equal\s+employment\s+opportunity"
     r"|institutional\s+equity"
+    r"|not\s+accept\w*\s+applications?\s+(?:via|by|through|over)\s+email"
     r")\b",
     re.IGNORECASE,
 )
@@ -87,9 +87,12 @@ def _extract_application_email(text: str) -> str | None:
                 return m.group(0)
         start = max(0, m.start() - _CONTEXT_WINDOW)
         end = min(len(text), m.end() + _CONTEXT_WINDOW)
-        context = _EMAIL_RE.sub("", text[start:end])
-        if _EXCLUDE_KEYWORDS_RE.search(context):
+        # Check exclusion keywords only in text BEFORE the email — EEO/disability
+        # boilerplate that follows a valid application email must not suppress it.
+        backward = _EMAIL_RE.sub("", text[start:m.end()])
+        if _EXCLUDE_KEYWORDS_RE.search(backward):
             continue
+        context = _EMAIL_RE.sub("", text[start:end])
         if _APPLY_KEYWORDS_RE.search(context):
             return m.group(0)
     return None
