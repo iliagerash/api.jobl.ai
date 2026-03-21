@@ -136,8 +136,10 @@ _DEADLINE_LABEL_RE = re.compile(
       | ends\s+on
       | accepted\s+through
       | applications?\s+received\s+by
+      | last\s+application\s+date
       | date\s+limite\s+(?:pour\s+)?(?:postuler|de\s+candidature)?
       | date\s+de\s+(?:cl[oô]ture|fermeture)
+      | date\s+de\s+fin\s+d[''\u2019]affichage\b
       | date\s+d[''\u2019]affichage\b
       | p[eé]riode\s+d[''\u2019]inscription\b
       | avant\s+le
@@ -166,6 +168,14 @@ _INLINE_APPLY_BY_RE = re.compile(
 # the next text node (span), or be empty when entirely in the next node.
 _INLINE_RESUME_BY_RE = re.compile(
     r"r[eé]sum[eé]s?\s+by\s*(.*)",
+    re.IGNORECASE,
+)
+
+# Inline prose: "Submit your application via our careers' website by 8 March 2026"
+#               "Submit your CV by April 30, 2026"
+# Uses negative lookahead to stop consuming tokens once "by" is reached.
+_INLINE_SUBMIT_BY_RE = re.compile(
+    r"submit\w*\s+(?:(?!by[\s,])\S+\s+){0,8}by\s+(.*)",
     re.IGNORECASE,
 )
 
@@ -405,6 +415,16 @@ def _extract_expiry_from_text(full_text: str) -> date | None:
             if d is not None:
                 return d
 
+        # Inline: "Submit your application via our careers' website by 8 March 2026"
+        m_sub = _INLINE_SUBMIT_BY_RE.search(line)
+        if m_sub:
+            captured = m_sub.group(1).strip()
+            d = _parse_date(captured, mm_dd) if captured else None
+            if d is None and i + 1 < len(lines):
+                d = _parse_date(captured + " " + lines[i + 1], mm_dd) or _parse_date(lines[i + 1], mm_dd)
+            if d is not None:
+                return d
+
         # Inline prose: "posting will close at 11:59 pm MST on March 16, 2026"
         m3 = _INLINE_CLOSE_ON_RE.search(line)
         if m3:
@@ -427,6 +447,20 @@ def _extract_expiry_from_text(full_text: str) -> date | None:
                     parts.append(lines[i + j])
                 candidate = " ".join(p for p in parts if p)
                 d = _parse_date(candidate, mm_dd)
+                if d is not None:
+                    return d
+
+        # Bare "by" line — get_text(separator="\n") can split "...by <date>" across
+        # lines when the date is in a separate inline element (e.g. <span class="hl-date">).
+        # Only trigger when recent preceding lines contain submission context.
+        if re.search(r'^\s*by\s*$', line, re.IGNORECASE) and i + 1 < len(lines):
+            prev_ctx = " ".join(lines[max(0, i - 3):i])
+            if re.search(
+                r'\bsubmit|send\b.{0,20}\bresume|apply\b|application\b|candidature\b',
+                prev_ctx,
+                re.IGNORECASE,
+            ):
+                d = _parse_date(lines[i + 1], mm_dd) or _parse_partial_date(lines[i + 1])
                 if d is not None:
                     return d
 
@@ -910,6 +944,18 @@ def _split_on_brs(container: Tag, soup: BeautifulSoup) -> None:
             _flush()
             bucket = []
             new_top.append(child)
+        elif (
+            isinstance(child, Tag)
+            and child.name in ("b", "strong")
+            and len(child.get_text(strip=True)) > 4
+            and _is_section_header(child.get_text(strip=True))
+            and any(isinstance(n, NavigableString) and str(n).strip() for n in bucket)
+        ):
+            # Standalone heading bold encountered after non-empty text (e.g. a
+            # job-reference code "GOL00555" in the same run) — flush the text
+            # first so they become separate paragraphs.
+            _flush()
+            bucket = [child]
         else:
             bucket.append(child)
     _flush()
