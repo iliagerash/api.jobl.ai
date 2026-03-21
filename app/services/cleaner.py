@@ -197,7 +197,7 @@ def _parse_date(text: str, mm_dd_first: bool = False) -> date | None:
     m = re.search(r"(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})", text)
     if not m:
         # Try 2-digit year: M/D/YY or D/M/YY
-        m2 = re.search(r"(\d{1,2})[/\-](\d{1,2})[/\-](\d{2})$", text.strip())
+        m2 = re.search(r"(\d{1,2})[/\-](\d{1,2})[/\-](\d{2})\b", text)
         if m2:
             a, b, yy = int(m2.group(1)), int(m2.group(2)), int(m2.group(3))
             year = 2000 + yy
@@ -462,7 +462,17 @@ def _split_bold_on_br(body: Tag, soup: BeautifulSoup) -> None:
                 new_nodes.append(soup.new_tag("br"))
 
         if not new_nodes:
-            tag.decompose()
+            # Tag had only whitespace + <br> elements (e.g. <strong> <br><br></strong>).
+            # Preserve the <br>s so _collapse_brs can convert them to paragraph breaks;
+            # decompose only if there were no <br>s at all.
+            br_count = len(segments) - 1  # one <br> between each segment
+            if br_count > 0:
+                brs = [soup.new_tag("br") for _ in range(br_count)]
+                tag.replace_with(brs[0])
+                for j, br_tag in enumerate(brs[1:], 1):
+                    brs[j - 1].insert_after(br_tag)
+            else:
+                tag.decompose()
             continue
         tag.replace_with(new_nodes[0])
         for i, node in enumerate(new_nodes[1:], 1):
