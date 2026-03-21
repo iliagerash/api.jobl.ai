@@ -124,7 +124,7 @@ _DEADLINE_LABEL_RE = re.compile(
       | apply\s+(?:by\s+date|before)
       | posting\s+(?:closes|end\s+date|expiration\s+date)
       | job\s+posting\s+(?:end|expiration)\s+date
-      | applications?\s+close
+      | applications?\s+(?:will\s+)?close
       | applications?\s+due
       | expir(?:y|ation)\s+date
       | application\s+window\b.{0,60}close\s+on
@@ -143,6 +143,8 @@ _DEADLINE_LABEL_RE = re.compile(
       | avant\s+le
       | candidatures?\s+re[cç]ues?\s+jusqu(?:[''\u2019]|\s+)au
       | fermeture\s+du\s+concours
+      | (?:cette\s+offre\s+)?expirer[a]?\s+le
+      | offre\s+(?:se\s+termine|valide\s+jusqu(?:[''\u2019]|\s+)au)
     )
     \s*:?\s*
     """,
