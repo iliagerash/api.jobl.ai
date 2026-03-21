@@ -87,8 +87,7 @@ api.jobl.ai/
 ├── scripts/
 │   ├── extract_labelling_data.py           # Populate job_labelling table (balanced per class)
 │   ├── evaluate_cleaner_extractor.py       # Re-run cleaner/extractor on verified rows
-│   ├── generate_training_data.py           # Bootstrap categorizer training CSV from DB
-│   ├── generate_training_data_labelled.py  # Training CSV from manually reviewed job_labelling
+│   ├── generate_training_data.py           # Training CSV from job_labelling table
 │   └── train_categorizer.py               # Train LightGBM, save .pkl artifact
 ├── sql/
 │   ├── seed_categories.sql      # 26 category rows
@@ -425,41 +424,22 @@ alembic revision --autogenerate -m "describe change"
 
 ## Categorizer Training
 
-### 1. Generate training data from the database
+### 1. Generate training data
 
-Queries EN/FR jobs, joins `category_map`, and writes labeled training rows.
+Exports all rows from the `job_labelling` table (all 26 categories) to a training CSV.
 
 ```bash
-# All countries, category_map where available, heuristics as fallback
-python scripts/generate_training_data.py \
-  --output data/ \
-  --limit 100000
-
-# US + CA only
-python scripts/generate_training_data.py \
-  --output data/ \
-  --limit 100000 \
-  --countries=us,ca
-
-# Only rows with a category_map match (discard unmapped rows)
-python scripts/generate_training_data.py \
-  --output data/ \
-  --limit 100000 \
-  --countries=us,ca \
-  --no-heuristics
+python scripts/generate_training_data.py --output data/
 ```
-
-`DATABASE_URL` is read from `.env` automatically.
 
 Output:
 - `data/categorizer_training.csv` — columns: `title`, `original_category`, `description_plaintext`, `category_id`
 
-The script prints a summary of how many rows came from `category_map` vs. keyword heuristics:
 ```
-Fetched 87432 jobs from DB
-Wrote 87432 training rows to data/categorizer_training.csv
-  from category_map: 61204 | from heuristics: 26228
+Wrote 4800 rows to data/categorizer_training.csv
 ```
+
+`DATABASE_URL` is read from `.env` automatically.
 
 ### 2. Train the model
 
@@ -565,10 +545,10 @@ Once satisfied, click **⏳ Pending** to reset `verified → false` for that job
 ### 3. Export training data
 
 ```bash
-python scripts/generate_training_data_labelled.py --output data/
+python scripts/generate_training_data.py --output data/
 ```
 
-Exports all rows from `job_labelling` (all 26 categories, including Other) to `data/categorizer_training.csv` in the same format as `generate_training_data.py`. Train the model with `train_categorizer.py` as usual.
+Exports all rows from `job_labelling` (all 26 categories) to `data/categorizer_training.csv`. Train the model with `train_categorizer.py` as usual.
 
 ---
 
