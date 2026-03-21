@@ -1250,6 +1250,22 @@ def _enforce_allowed_tags(body: Tag) -> None:
 
 _MD_BOLD_RE = re.compile(r"\*\*([^\*\n]+?)\*\*")
 
+# Windows-1252 "smart" punctuation stored as C1 control codepoints (U+0080–U+009F).
+# Occurs when a Windows-1252 page is mislabelled ISO-8859-1: bytes like \x92 (')
+# get decoded as U+0092 and re-encoded in UTF-8 as \xC2\x92, displayed as "Â" +
+# an invisible character (e.g. "company's" → "companyÂs").
+_C1_FIX_RE = re.compile("\u00c2([\u0080-\u009f])")
+_C1_MAP: dict[str, str] = {
+    "\u0091": "\u2018",  # '  left single quote
+    "\u0092": "\u2019",  # '  right single quote / apostrophe
+    "\u0093": "\u201c",  # "  left double quote
+    "\u0094": "\u201d",  # "  right double quote
+    "\u0095": "\u2022",  # •  bullet
+    "\u0096": "\u2013",  # –  en dash
+    "\u0097": "\u2014",  # —  em dash
+    "\u0099": "\u2122",  # ™  trademark
+}
+
 _UI_ARTIFACT_RE = re.compile(
     r"^(apply(?:\s+(?:now|for\s+this\s+(?:job|position|role)))?|back\s+to\s+search\s+results?"
     r"|postulez(?:\s+maintenant)?|accueil|nos\s+offres?|toutes?\s+les\s+offres?"
