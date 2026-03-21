@@ -780,7 +780,6 @@ def _promote_leading_bold_in_p(soup: BeautifulSoup, body: Tag) -> None:
         is_inline_label = (
             len(header_text.split()) <= 3
             and ":" in first.get_text()
-            and len(remainder) < 80
         )
         if is_inline_label:
             continue
@@ -1010,7 +1009,7 @@ def _enforce_allowed_tags(body: Tag) -> None:
             tag.unwrap()
 
 
-_MD_BOLD_RE = re.compile(r"\*\*([^\*\n]+?)\*\*|\*([^\*\n]+?)\*")
+_MD_BOLD_RE = re.compile(r"\*\*([^\*\n]+?)\*\*|\*([^\s\*\n][^\*\n]*?)\*")
 
 _UI_ARTIFACT_RE = re.compile(
     r"^(apply(?:\s+(?:now|for\s+this\s+(?:job|position|role)))?|back\s+to\s+search\s+results?"
@@ -1061,7 +1060,7 @@ def _convert_markdown_bold(src: str) -> str:
 def _build_clean_html(raw_html: str) -> str:
     src = urllib.parse.unquote(raw_html)
     # Strip JSON-style backslash escapes (e.g. \" → ")
-    src = re.sub(r'\\(["\'/])', r'\1', src)
+    src = re.sub(r'\\(["\'/\*])', r'\1', src)
     src = re.sub(r"!\*!<.*", "", src, flags=re.DOTALL)
     # Remove unfilled template placeholders like [[title]] or {{field_name}}
     src = re.sub(r"\[\[.*?\]\]|\{\{.*?\}\}", "", src)
@@ -1075,6 +1074,7 @@ def _build_clean_html(raw_html: str) -> str:
     _strip_all_attributes(body)
     _split_bold_on_br(body, soup)
     _unwrap_nested_bold(body)
+    _split_bold_on_br(body, soup)  # second pass: outer strongs that gained <br> after unwrapping
     _merge_consecutive_bold(body)
     _promote_standalone_bold(soup, body)
     _wrap_orphan_lis(body, soup)
