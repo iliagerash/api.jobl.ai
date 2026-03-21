@@ -1032,7 +1032,6 @@ _UI_ARTIFACT_RE = re.compile(
     # Internal job metadata
     r"|job\s+(?:id|req(?:uisition)?(?:\s+id)?)\s*[:#]?\s*\S+"
     r"|posted\s+on\s*[:\-]?\s*.+"
-    r"|location\s*[:\-]\s*.+"
     r"|grade\s+level\s*(?:\([^)]+\))?\s*:?\s*\S*"
     # EEO job classification codes (e.g. "203 - Entry Professional (EEO Job Group)")
     r"|.*\(eeo(?:[- ]2)?\s+job\s+(?:group|categor\w+)\).*"
