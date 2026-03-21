@@ -1314,6 +1314,9 @@ def _convert_markdown_bold(src: str) -> str:
 
 def _build_clean_html(raw_html: str) -> str:
     src = urllib.parse.unquote(raw_html)
+    # Fix Windows-1252 smart punctuation stored as C1 control codepoints
+    # (e.g. "companyÂs" → "company's")
+    src = _C1_FIX_RE.sub(lambda m: _C1_MAP.get(m.group(1), ""), src)
     # Strip JSON-style backslash escapes (e.g. \" → ")
     src = re.sub(r'\\(["\'/\*])', r'\1', src)
     src = re.sub(r"!\*!<.*", "", src, flags=re.DOTALL)
