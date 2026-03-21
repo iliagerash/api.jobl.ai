@@ -672,7 +672,12 @@ def _split_trailing_section_from_label_para(body: Tag, soup: BeautifulSoup) -> N
                 continue
             if not past_first:
                 continue
-            if isinstance(child, Tag) and child.name in ("b", "strong") and not _is_label_bold(child):
+            if (
+                isinstance(child, Tag)
+                and child.name in ("b", "strong")
+                and not _is_label_bold(child)
+                and _is_section_header(child.get_text(strip=True))
+            ):
                 child.insert_before(soup.new_tag("br"))
                 _split_p_on_brs(p, soup)
                 break
