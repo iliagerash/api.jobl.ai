@@ -142,6 +142,7 @@ _DEADLINE_LABEL_RE = re.compile(
       | open\s+until
       | posted\s+until
       | no\s+later\s+than
+      | prior\s+to\b
       | ends\s+on
       | accepted\s+through
       | applications?\s+received\s+by
@@ -150,6 +151,8 @@ _DEADLINE_LABEL_RE = re.compile(
       | date\s+de\s+(?:cl[oô]ture|fermeture)
       | date\s+de\s+fin\s+d[''\u2019]affichage\b
       | date\s+d[''\u2019]affichage\b
+      | fin\s+d[e]\s+l[''\u2019]affichage\b
+      | fin\s+d[''\u2019]affichage\b
       | p[eé]riode\s+d[''\u2019]inscription\b
       | avant\s+le
       | candidatures?\s+re[cç]ues?\s+jusqu(?:[''\u2019]|\s+)au
@@ -479,6 +482,20 @@ def _extract_expiry_from_text(full_text: str) -> date | None:
                 if d is not None:
                     return d
 
+        # French "du [date1] au [date2]" range — the closing date follows "au".
+        # Only trigger when a parseable date appears in the 3 preceding lines
+        # (confirming this is the second half of a date range, not random prose).
+        m_au = re.match(r'^\s*au\s*(.*)', line, re.IGNORECASE)
+        if m_au:
+            prev_lines = lines[max(0, i - 3):i]
+            if any(_parse_date(pl, mm_dd) is not None for pl in prev_lines):
+                rest = m_au.group(1).strip()
+                d = (_parse_date(rest, mm_dd) or _parse_partial_date(rest)) if rest else None
+                if d is None and i + 1 < len(lines):
+                    d = _parse_date(lines[i + 1], mm_dd) or _parse_partial_date(lines[i + 1])
+                if d is not None:
+                    return d
+
     return None
 
 
@@ -490,7 +507,8 @@ _START_DATE_CONTEXT_RE = re.compile(
     r"|full\s+consideration(?:\s+date)?"
     r"|begin(?:ning)?\s+on|end(?:ing)?\s+on|start(?:s)?\s+on"
     r"|term\s+(?:start|end)"
-    r"|entr[eé]e?\s+en\s+fonction",
+    r"|entr[eé]e?\s+en\s+fonction"
+    r"|\bdu\s*$",  # French "du [date] au [date]" range — "du" precedes the start date
     re.IGNORECASE,
 )
 
@@ -779,7 +797,12 @@ def _merge_consecutive_bold(body: Tag) -> None:
                 break
             t1 = tag.get_text(strip=True)
             t2 = nxt.get_text(strip=True)
-            if not (_is_header_fragment(t1) and _is_header_fragment(t2)):
+            # Allow merge when t2 ends with sentence-final punctuation: the
+            # combined text will end with "." / "?" / "!" and will therefore not
+            # be promoted to <h3>, which is exactly what we want (e.g.
+            # "<strong>Applications close at … 16th </strong><strong>April 2026.</strong>").
+            t2_completes_sentence = t2.endswith((".", "?", "!"))
+            if not (_is_header_fragment(t1) and (_is_header_fragment(t2) or t2_completes_sentence)):
                 break
             if t1.lower() in t2.lower() or t2.lower() in t1.lower():
                 break
@@ -796,9 +819,10 @@ def _promote_standalone_bold(soup: BeautifulSoup, body: Tag) -> None:
         parent = tag.parent
         if parent is None:
             continue
-        # Don't promote when parent is an inline element (e.g. <a>) — the
-        # strong is part of inline content, not a standalone section header.
-        if parent.name in ("a", "em", "strong", "b", "span"):
+        # Don't promote when parent is an inline element (e.g. <a>) or a list
+        # item — bold text that fills an entire <li> is list content, not a
+        # section header, and replacing the <li> with <h3> destroys the list.
+        if parent.name in ("a", "em", "strong", "b", "span", "li"):
             continue
         if parent.get_text(strip=True) == text and _is_section_header(text):
             h3 = soup.new_tag("h3")
@@ -822,7 +846,8 @@ def _split_label_bold_rows(body: Tag, soup: BeautifulSoup) -> None:
         if not (isinstance(node, Tag) and node.name in ("b", "strong")):
             return False
         text = node.get_text(strip=True)
-        return text.endswith(":") and 1 <= len(text.split()) <= 5
+        # Require actual content before ":" so a bare <strong>:</strong> is excluded.
+        return text.endswith(":") and len(text.rstrip(":").strip()) > 0 and len(text.split()) <= 5
 
     def _has_preceding_content(tag: Tag) -> bool:
         """Return True if tag is preceded by non-whitespace content that is NOT a <br>."""
@@ -872,7 +897,7 @@ def _split_trailing_section_from_label_para(body: Tag, soup: BeautifulSoup) -> N
         if not (isinstance(node, Tag) and node.name in ("b", "strong")):
             return False
         text = node.get_text(strip=True)
-        return text.endswith(":") and 1 <= len(text.split()) <= 5
+        return text.endswith(":") and len(text.rstrip(":").strip()) > 0 and len(text.split()) <= 5
 
     for p in list(body.find_all("p")):
         children = list(p.children)
@@ -1161,7 +1186,7 @@ def _promote_leading_bold_in_p(soup: BeautifulSoup, body: Tag) -> None:
         # together…"), not a standalone section header.
         remainder_plain = BeautifulSoup(remainder, "lxml").get_text() if remainder else ""
         first_char = remainder_plain.lstrip()[0:1]
-        if first_char and (first_char.islower() or first_char in ".,;:)"):
+        if first_char and (first_char.islower() or first_char in ".,;:)("):
             continue
         h3 = soup.new_tag("h3")
         h3.string = header_text

@@ -93,7 +93,11 @@ def main() -> None:
                     local_part = candidate.split("@")[0]
                     if _EXCLUDE_LOCAL_PART_RE.search(local_part):
                         continue
-                    container_text = (hl_tag.parent or hl_tag).get_text()
+                    container = hl_tag.parent or hl_tag
+                    container_text = container.get_text()
+                    prev_sib = container.find_previous_sibling() if container is not hl_tag else None
+                    if prev_sib:
+                        container_text = prev_sib.get_text() + " " + container_text
                     if not _EXCLUDE_KEYWORDS_RE.search(container_text):
                         new_email = candidate
                         break
