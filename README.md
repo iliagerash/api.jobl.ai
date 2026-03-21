@@ -197,11 +197,22 @@ For mixed-language countries (CA, CH, SG), langid result is used directly if in 
 - Print notice: `Please print/save this job description …`
 - Separator lines, job metadata labels, EEO codes
 
-**Expiry extraction** (`extract_expiry` / `extract_expiry_raw`) scans plain text for deadline patterns:
+**Expiry extraction** (`extract_expiry` / `extract_expiry_raw`) uses two paths:
 
-- Label-based: `Application deadline:`, `Closing date:`, `Posting End Date:`, `Job Posting End Date:`, `Apply by date:`, `Open until:`, `Position start date:`, and French equivalents (`Date limite pour postuler:`, `Date de clôture:`, `Date d'affichage:`, `Période d'inscription:`, `Avant le`, …)
+**Path 1 — `<span class="hl-date">` tags**: the raw HTML is searched first. Each tagged date is classified as either an application deadline or a non-deadline date (start date, contract end, etc.) by inspecting the preceding sibling text:
+- Classified as **non-deadline** when preceded by: `start date`, `available from`, `begin on`, `end on`, `term start/end`, `fixed to` (fixed-term contract end), `date de début`, `du` (French range start), `entrée en fonction`, …
+- All other tagged dates are classified as the application deadline.
+
+**Path 2 — plain-text scan**: applied when no hl-date tag yields a deadline. Scans line by line for:
+- Label-based: `Application deadline:`, `Closing date:`, `Closing`, `Closing on:`, `Close date:`, `Posting End Date:`, `Job Posting End Date:`, `Apply by date:`, `Open until:`, `Prior to`, `Application window close`, `Fin de l'affichage`, and French equivalents (`Date limite pour postuler:`, `Date de clôture:`, `Date d'affichage:`, `Période d'inscription:`, `Avant le`, …)
 - Inline prose: `posting will close on …`, `posting will expire on or before …`, `apply by April 1, 2026`, `submit a résumé by …`
+- French date ranges: `Du 2026-02-26 au 2026-03-15` (the `au` date is extracted as the deadline)
 - Date formats: `YYYY-MM-DD`, `MM/DD/YYYY`, `DD/MM/YYYY`, `Month D, YYYY`, `D Month YYYY`, `D mois AAAA`, `M/D/YY` (2-digit year interpreted as 20xx)
+
+**HTML formatting guards** prevent non-deadline bold text from being incorrectly split into separate paragraphs:
+- `_is_section_header` skips strings containing `@` (emails), `#` followed by digits (reference codes like `#11-26`), or matching phone number patterns.
+- `_MID_SENTENCE_ENDS_RE` blocks mid-sentence bold tags (preceded by articles/prepositions) from triggering a paragraph flush.
+- Bold inside `<li>` is never promoted to `<h3>`.
 
 `extract_expiry` returns an ISO date for future deadlines, `"expired"` for past dates, or `None`. `extract_expiry_raw` always returns the date regardless of whether it has passed (used when building training data).
 
@@ -224,7 +235,20 @@ When `MODEL_DIR` is not set, a rules-only path applies the same pre/post steps w
 
 ### 4. Email Extraction and Masking (EN/FR only)
 
-A regex (`[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}`) scans the plain text of the cleaned description. The first match is returned as `application_email`, and all occurrences are replaced with `***email_hidden***` in the HTML output.
+A regex (`[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}`) scans the description for candidate emails. Extraction uses two strategies, tried in order:
+
+1. **`<span class="hl-email">` tags** — the raw HTML is searched first. The tag's parent element text plus the immediately preceding sibling element text are checked against an exclusion list.
+2. **Plain-text fallback** — scans the cleaned description plain text; requires apply/submit/CV keywords within 250 chars and absence of exclusion keywords within the same window (checked backward-only so boilerplate after the email does not suppress it).
+
+**Exclusion keywords** (email is skipped when these appear in context):
+- Accommodation / accessibility language (`accommodation`, `disability`, `handicap`, `accessibility`, …)
+- Fraud / data-privacy notices (`fraud`, `scam`, `GDPR`, `CCPA`, `privacy notice`, …)
+- EEO boilerplate (`equal employment opportunity`, `institutional equity`)
+- Explicit rejection: `not accept[ing] applications via/by/through email`
+
+**Local-part exclusions** suppress the email regardless of context: `noreply`, `donotreply`, `support`, `helpdesk`, `fraud`, `scam`, `eeo`, …
+
+The first accepted email is returned as `application_email`; all occurrences are replaced with `***email_hidden***` in the HTML output.
 
 ### 5. Categorization (EN/FR only)
 
@@ -503,7 +527,7 @@ For higher-quality training data, jobs can be manually reviewed and corrected vi
 
 ### 1. Populate the labelling table
 
-Extracts a balanced sample of jobs (up to `--limit` per category, classes 1–25), cleans descriptions, and auto-assigns categories via `category_map` or heuristics:
+Extracts a balanced sample of jobs (up to `--limit` per category, classes 1–26), cleans descriptions, and auto-assigns categories via `category_map` or heuristics:
 
 ```bash
 python scripts/extract_labelling_data.py --limit 200 --countries=us,ca
@@ -541,14 +565,10 @@ Once satisfied, click **⏳ Pending** to reset `verified → false` for that job
 ### 3. Export training data
 
 ```bash
-# All rows (auto-assigned + manually reviewed)
 python scripts/generate_training_data_labelled.py --output data/
-
-# Manually reviewed rows only
-python scripts/generate_training_data_labelled.py --output data/ --reviewed-only
 ```
 
-Outputs `data/categorizer_training.csv` in the same format as `generate_training_data.py`. Train the model with `train_categorizer.py` as usual.
+Exports all rows from `job_labelling` (all 26 categories, including Other) to `data/categorizer_training.csv` in the same format as `generate_training_data.py`. Train the model with `train_categorizer.py` as usual.
 
 ---
 
