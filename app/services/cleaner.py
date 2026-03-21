@@ -126,7 +126,7 @@ _DEADLINE_LABEL_RE = re.compile(
         application\s+deadline
       | unposting\s+date
       | (?:job\s+)?posting\s+down\s+date
-      | closing\s+(?:date|on)
+      | closing\b
       | close\s+date
       | deadline
       | position\s+closes
@@ -508,6 +508,7 @@ _START_DATE_CONTEXT_RE = re.compile(
     r"|begin(?:ning)?\s+on|end(?:ing)?\s+on|start(?:s)?\s+on"
     r"|term\s+(?:start|end)"
     r"|entr[eé]e?\s+en\s+fonction"
+    r"|fixed\s+to\b"  # fixed-term contract end date, not an application deadline
     r"|\bdu\s*$",  # French "du [date] au [date]" range — "du" precedes the start date
     re.IGNORECASE,
 )
@@ -1176,11 +1177,10 @@ def _promote_leading_bold_in_p(soup: BeautifulSoup, body: Tag) -> None:
         header_text = first.get_text(strip=True).rstrip(":").strip()
         if not _is_section_header(header_text):
             continue
-        remainder = "".join(
-            str(c) for c in p.children if c is not first
-        ).strip().lstrip(":").strip()
+        _rem_raw = "".join(str(c) for c in p.children if c is not first).strip()
+        remainder = _rem_raw.lstrip(":").strip()
         is_inline_label = bool(remainder) and (
-            (len(header_text.split()) <= 3 and ":" in first.get_text())
+            (len(header_text.split()) <= 3 and (":" in first.get_text() or _rem_raw.startswith(":")))
             or re.search(r"[\-\u2013\u2014]\s*$", first.get_text())
         )
         if is_inline_label:
