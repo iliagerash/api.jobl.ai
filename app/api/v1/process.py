@@ -37,7 +37,7 @@ _EXCLUDE_KEYWORDS_RE = re.compile(
     r"|mesures?.{0,20}d.adaptation|adaptation"
     r"|accessibilité|personnes?.{0,20}handicapées?"
     r"|aboriginal|torres\s+strait|indigenous|first\s+nations|koori\w*"
-    r"|fraud|scam|legitimacy|phishing|spoofing|impersonat"
+    r"|fraud|scam|legitimacy|authenticity|phishing|spoofing|impersonat"
     r")\b",
     re.IGNORECASE,
 )
@@ -45,7 +45,7 @@ _EXCLUDE_LOCAL_PART_RE = re.compile(
     r"accommodat|accessibl|disability|disabilities|noreply|no.reply|donotreply|do.not.reply|support|helpdesk|help.desk|fraud|scam",
     re.IGNORECASE,
 )
-_CONTEXT_WINDOW = 350  # characters around the email to search for keywords
+_CONTEXT_WINDOW = 250  # characters around the email to search for keywords
 
 # Keywords that may appear in the local part of an application email address
 _LOCAL_PART_RE = re.compile(

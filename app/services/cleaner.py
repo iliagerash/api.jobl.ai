@@ -132,6 +132,9 @@ _DEADLINE_LABEL_RE = re.compile(
       | (?:hired|offered)\b.{0,120}(?:between|from)\b.{0,120}\band\b
       | open\s+until
       | posted\s+until
+      | no\s+later\s+than
+      | ends\s+on
+      | accepted\s+through
       | date\s+limite\s+(?:pour\s+)?(?:postuler|de\s+candidature)?
       | date\s+de\s+(?:cl[oô]ture|fermeture)
       | date\s+d[''\u2019]affichage\b
@@ -763,7 +766,8 @@ def _promote_leading_bold_in_p(soup: BeautifulSoup, body: Tag) -> None:
         # subject continuing into a sentence (e.g. "<strong>Unimax</strong> brings
         # together…"), not a standalone section header.
         remainder_plain = BeautifulSoup(remainder, "lxml").get_text() if remainder else ""
-        if remainder_plain and remainder_plain.lstrip()[0:1].islower():
+        first_char = remainder_plain.lstrip()[0:1]
+        if first_char and (first_char.islower() or first_char in ".,;:)"):
             continue
         h3 = soup.new_tag("h3")
         h3.string = header_text
@@ -894,18 +898,22 @@ def _hoist_h3_from_li(soup: BeautifulSoup, body: Tag) -> None:
 
 
 def _dedup_consecutive_h3(body: Tag) -> None:
-    """Remove an <h3> that is immediately followed by another <h3>.
+    """Remove an <h3> that is immediately followed by an <h3> with identical text.
 
-    Job boards (Workday, Lever, etc.) wrap sections in a category <h3>
-    ("Company Description", "Qualifications") immediately before the real
-    section <h3>. The category header adds no value once we have the
-    specific title that follows it.
+    Job boards (Workday, Lever, etc.) sometimes emit duplicate consecutive
+    headings (e.g. two "Description du poste" blocks). Only same-text pairs
+    are removed; consecutive headings with different text (e.g. "Step 1",
+    "Step 2", …) are kept intact.
     """
     for h3 in list(body.find_all("h3")):
         # find_next_sibling(True) skips whitespace text nodes that lxml may
         # insert between adjacent block elements.
         next_el = h3.find_next_sibling(True)
-        if next_el and next_el.name == "h3":
+        if (
+            next_el
+            and next_el.name == "h3"
+            and h3.get_text(strip=True) == next_el.get_text(strip=True)
+        ):
             h3.decompose()
 
 
