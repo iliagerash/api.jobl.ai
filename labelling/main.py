@@ -94,7 +94,6 @@ async def index(request: Request) -> HTMLResponse:
             "reviewed": count_map.get(cid, {}).get("reviewed", 0),
         }
         for cid, title in CATEGORIES
-        if cid != 26
     ]
 
     return templates.TemplateResponse(
