@@ -148,9 +148,11 @@ _DEADLINE_LABEL_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
-# Inline prose: "apply by April 1, 2026"
+# Inline prose: "apply by April 1, 2026" / "apply online by February 16, 2026"
+# Allows up to 3 optional words between "apply" and "by"; captures remainder of line
+# so the date can appear on the next line when wrapped in a <span>.
 _INLINE_APPLY_BY_RE = re.compile(
-    r"apply\s+by\s+([A-Za-z]+\s+\d{1,2},?\s+\d{4})",
+    r"apply\s+(?:\w+\s+){0,3}by\s+(.*)",
     re.IGNORECASE,
 )
 
@@ -305,10 +307,14 @@ def _extract_expiry_from_text(full_text: str) -> date | None:
                     if d is not None:
                         return d
 
-        # Inline prose: "apply by April 1, 2026"
+        # Inline prose: "apply by April 1, 2026" / "apply online by February 16, 2026"
         m2 = _INLINE_APPLY_BY_RE.search(line)
         if m2:
-            d = _parse_date(m2.group(1), mm_dd)
+            captured = m2.group(1).strip()
+            d = _parse_date(captured, mm_dd) if captured else None
+            if d is None and i + 1 < len(lines):
+                # Date may follow on the next line (span split), possibly after a weekday
+                d = _parse_date(captured + " " + lines[i + 1], mm_dd) or _parse_date(lines[i + 1], mm_dd)
             if d is not None:
                 return d
 
