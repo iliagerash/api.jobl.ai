@@ -956,8 +956,13 @@ def _drop_empty_blocks(body: Tag) -> None:
         if not text:
             tag.decompose()
         elif re.fullmatch(r"[\w\s/\-]+:\s*", text):
-            # Label with no value, e.g. "Position Title: " left after placeholder removal
-            tag.decompose()
+            # Label with no value, e.g. "Position Title: " left after placeholder removal.
+            # Keep if the next sibling is a list — it's a genuine intro label ("We offer:").
+            next_el = tag.find_next_sibling()
+            if next_el and next_el.name in ("ul", "ol"):
+                pass
+            else:
+                tag.decompose()
         elif tag.name == "p" and re.fullmatch(r"\d{1,4}", text):
             # Lone number, e.g. "09" orphaned after a Grade Level heading is removed
             tag.decompose()

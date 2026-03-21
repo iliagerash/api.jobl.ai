@@ -13,7 +13,7 @@ Workflow:
   5. Once satisfied with a batch, click "Pending" to reset verified → false.
 
 Usage:
-    python scripts/evaluate_cleaner_extractor.py [--dry-run]
+    python scripts/evaluate_cleaner_extractor.py [--dry-run] [--category ID]
 """
 
 import argparse
@@ -39,21 +39,30 @@ def main() -> None:
         action="store_true",
         help="Print changes without writing to the DB",
     )
+    parser.add_argument(
+        "--category",
+        type=int,
+        metavar="ID",
+        help="Limit to a specific category_id",
+    )
     args = parser.parse_args()
 
     db = SessionLocal()
     try:
+        category_filter = "AND category_id = :cat_id" if args.category else ""
         rows = db.execute(
-            text("""
+            text(f"""
                 SELECT id, description
                 FROM job_labelling
-                WHERE verified = true
+                WHERE verified = true {category_filter}
                 ORDER BY id
-            """)
+            """),
+            {"cat_id": args.category} if args.category else {},
         ).fetchall()
 
         total = len(rows)
-        print(f"Found {total} verified row(s) to process.\n")
+        cat_info = f" in category {args.category}" if args.category else ""
+        print(f"Found {total} verified row(s){cat_info} to process.\n")
         if not total:
             return
 
