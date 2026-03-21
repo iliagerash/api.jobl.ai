@@ -134,6 +134,7 @@ _DEADLINE_LABEL_RE = re.compile(
       | date\s+limite\s+(?:pour\s+)?(?:postuler|de\s+candidature)?
       | date\s+de\s+(?:cl[oô]ture|fermeture)
       | date\s+d[''\u2019]affichage\b
+      | p[eé]riode\s+d[''\u2019]inscription\b
       | avant\s+le
       | candidatures?\s+re[cç]ues?\s+jusqu(?:[''\u2019]|\s+)au
       | fermeture\s+du\s+concours
@@ -162,7 +163,7 @@ _INLINE_RESUME_BY_RE = re.compile(
 #               "this position closes on 2026-03-31"
 # Note: (.*)  — may be empty when the date falls in the next text node (span).
 _INLINE_CLOSE_ON_RE = re.compile(
-    r"(?:(?:job|this)\s+)?(?:posting|position)\s+(?:will\s+)?close[sd]?\b.{0,60}?\bon\b\s*(.*)",
+    r"(?:(?:job|this)\s+)?(?:posting|position)\s+(?:will\s+)?(?:close[sd]?|expire[sd]?)\b.{0,60}?\bon\b\s*(.*)",
     re.IGNORECASE,
 )
 
@@ -194,6 +195,18 @@ def _parse_date(text: str, mm_dd_first: bool = False) -> date | None:
 
     # Numeric DD/MM/YYYY or MM/DD/YYYY or DD-MM-YYYY
     m = re.search(r"(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})", text)
+    if not m:
+        # Try 2-digit year: M/D/YY or D/M/YY
+        m2 = re.search(r"(\d{1,2})[/\-](\d{1,2})[/\-](\d{2})$", text.strip())
+        if m2:
+            a, b, yy = int(m2.group(1)), int(m2.group(2)), int(m2.group(3))
+            year = 2000 + yy
+            pairs = [(a, b), (b, a)] if mm_dd_first else [(b, a), (a, b)]
+            for month, day in pairs:
+                try:
+                    return date(year, month, day)
+                except ValueError:
+                    pass
     if m:
         a, b, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
         # Order of tries depends on detected format: MM/DD (a=month, b=day) or DD/MM
@@ -872,7 +885,9 @@ def _dedup_consecutive_h3(body: Tag) -> None:
     specific title that follows it.
     """
     for h3 in list(body.find_all("h3")):
-        next_el = h3.find_next_sibling()
+        # find_next_sibling(True) skips whitespace text nodes that lxml may
+        # insert between adjacent block elements.
+        next_el = h3.find_next_sibling(True)
         if next_el and next_el.name == "h3":
             h3.decompose()
 
@@ -970,6 +985,18 @@ _UI_ARTIFACT_RE = re.compile(
     r"|grade\s+level\s*(?:\([^)]+\))?\s*:?\s*\S*"
     # EEO job classification codes (e.g. "203 - Entry Professional (EEO Job Group)")
     r"|.*\(eeo(?:[- ]2)?\s+job\s+(?:group|categor\w+)\).*"
+    # Job board navigation: "Previous job Next job", "Previous posting Next posting"
+    r"|previous\s+(?:job|posting|position)\s+next\s+(?:job|posting|position)"
+    # Employee/internal portal prompts
+    r"|are\s+you\s+(?:a\s+)?\w[\w\s]*employee\??"
+    r"|open\s+(?:my\s+)?\w[\w\s&]*portal"
+    r"|current\s+[\w\s]+employees?\s+should\s+apply\b.*"
+    # Email-this-job widget
+    r"|email\s+this\s+job\s+to(?:\s+a\s+friend)?"
+    r"|your\s+email\s+is\s+on\s+its\s+way\.{0,3}"
+    r"|email\s+has\s+not\s+(?:been\s+)?sent"
+    # Print/save notice
+    r"|please\s+print(?:[/\\]save)?\s+this\s+job\s+description.*"
     r")\s*$",
     re.IGNORECASE,
 )
@@ -982,6 +1009,8 @@ def _convert_markdown_bold(src: str) -> str:
 
 def _build_clean_html(raw_html: str) -> str:
     src = urllib.parse.unquote(raw_html)
+    # Strip JSON-style backslash escapes (e.g. \" → ")
+    src = re.sub(r'\\(["\'/])', r'\1', src)
     src = re.sub(r"!?\*!<.*", "", src, flags=re.DOTALL)
     # Remove unfilled template placeholders like [[title]] or {{field_name}}
     src = re.sub(r"\[\[.*?\]\]|\{\{.*?\}\}", "", src)
