@@ -135,6 +135,7 @@ _DEADLINE_LABEL_RE = re.compile(
       | no\s+later\s+than
       | ends\s+on
       | accepted\s+through
+      | applications?\s+received\s+by
       | date\s+limite\s+(?:pour\s+)?(?:postuler|de\s+candidature)?
       | date\s+de\s+(?:cl[oô]ture|fermeture)
       | date\s+d[''\u2019]affichage\b
@@ -495,6 +496,14 @@ def _unwrap_nested_bold(body: Tag) -> None:
             inner.unwrap()
 
 
+# Single-word fragments that cannot stand alone as a section header and should
+# always be merged with the adjacent bold fragment.
+_INCOMPLETE_HEADER_WORDS = frozenset({
+    "why", "how", "what", "who", "when", "where", "which",
+    "our", "your", "the", "a", "an",
+})
+
+
 def _merge_consecutive_bold(body: Tag) -> None:
     for tag in body.find_all(["strong", "b"]):
         if tag.parent is None:
@@ -510,8 +519,13 @@ def _merge_consecutive_bold(body: Tag) -> None:
             continue
         if t1.lower() in t2.lower() or t2.lower() in t1.lower():
             continue
-        # Both are standalone headers — keep separate so each becomes its own <h3>
-        if _is_section_header(t1) and _is_section_header(t2):
+        # Both are standalone headers — keep separate so each becomes its own <h3>,
+        # unless t1 is an incomplete word (e.g. "Why", "How") that needs the next
+        # fragment to form a complete heading (e.g. "Why Jerry.ai").
+        if (
+            _is_section_header(t1) and _is_section_header(t2)
+            and t1.lower() not in _INCOMPLETE_HEADER_WORDS
+        ):
             continue
         tag.string = t1 + " " + t2
         nxt.decompose()
@@ -1047,7 +1061,7 @@ def _build_clean_html(raw_html: str) -> str:
     src = urllib.parse.unquote(raw_html)
     # Strip JSON-style backslash escapes (e.g. \" → ")
     src = re.sub(r'\\(["\'/])', r'\1', src)
-    src = re.sub(r"!?\*!<.*", "", src, flags=re.DOTALL)
+    src = re.sub(r"!\*!<.*", "", src, flags=re.DOTALL)
     # Remove unfilled template placeholders like [[title]] or {{field_name}}
     src = re.sub(r"\[\[.*?\]\]|\{\{.*?\}\}", "", src)
     # Strip bare URLs (not inside href/src attributes)
