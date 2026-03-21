@@ -159,7 +159,7 @@ _DEADLINE_LABEL_RE = re.compile(
 # Allows up to 3 optional words between "apply" and "by"; captures remainder of line
 # so the date can appear on the next line when wrapped in a <span>.
 _INLINE_APPLY_BY_RE = re.compile(
-    r"apply\s+(?:\w+\s+){0,3}by\s+(.*)",
+    r"apply\s+(?:\w+\s+){0,3}by\s*(.*)",
     re.IGNORECASE,
 )
 
@@ -175,7 +175,7 @@ _INLINE_RESUME_BY_RE = re.compile(
 #               "Submit your CV by April 30, 2026"
 # Uses negative lookahead to stop consuming tokens once "by" is reached.
 _INLINE_SUBMIT_BY_RE = re.compile(
-    r"submit\w*\s+(?:(?!by[\s,])\S+\s+){0,8}by\s+(.*)",
+    r"submit\w*\s+(?:(?!by[\s,])\S+\s+){0,8}by\s*(.*)",
     re.IGNORECASE,
 )
 
