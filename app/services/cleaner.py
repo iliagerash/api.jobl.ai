@@ -437,7 +437,8 @@ _START_DATE_CONTEXT_RE = re.compile(
     r"start\s+date|start(?:ing)?\s*(?:date)?|available\s+(?:from|date)?"
     r"|date\s+de\s+d[eé]but|disponible\s+(?:le|à\s+partir)"
     r"|full\s+consideration(?:\s+date)?"
-    r"|begin(?:ning)?\s+on|end(?:ing)?\s+on|start(?:s)?\s+on",
+    r"|begin(?:ning)?\s+on|end(?:ing)?\s+on|start(?:s)?\s+on"
+    r"|term\s+(?:start|end)",
     re.IGNORECASE,
 )
 
@@ -446,7 +447,8 @@ _START_DATE_LABEL_RE = re.compile(
     r"""
     (?:start\s+date|starting\s+date?|date\s+de\s+d[eé]but
       |full\s+consideration(?:\s+date)?
-      |begin(?:ning)?\s+on|end(?:ing)?\s+on|start(?:s)?\s+on)
+      |begin(?:ning)?\s+on|end(?:ing)?\s+on|start(?:s)?\s+on
+      |term\s+(?:start|end))
     \s*:?\s*
     """,
     re.IGNORECASE | re.VERBOSE,
