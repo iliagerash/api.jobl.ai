@@ -1009,7 +1009,7 @@ def _enforce_allowed_tags(body: Tag) -> None:
             tag.unwrap()
 
 
-_MD_BOLD_RE = re.compile(r"\*\*([^\*\n]+?)\*\*|\*([^\s\*\n][^\*\n]*?)\*")
+_MD_BOLD_RE = re.compile(r"\*\*([^\*\n]+?)\*\*")
 
 _UI_ARTIFACT_RE = re.compile(
     r"^(apply(?:\s+(?:now|for\s+this\s+(?:job|position|role)))?|back\s+to\s+search\s+results?"
@@ -1054,7 +1054,7 @@ _UI_ARTIFACT_RE = re.compile(
 
 def _convert_markdown_bold(src: str) -> str:
     """Convert **text** and *text* to <strong>text</strong>."""
-    return _MD_BOLD_RE.sub(lambda m: f"<strong>{m.group(1) or m.group(2)}</strong>", src)
+    return _MD_BOLD_RE.sub(lambda m: f"<strong>{m.group(1)}</strong>", src)
 
 
 def _build_clean_html(raw_html: str) -> str:
