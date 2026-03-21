@@ -525,6 +525,7 @@ def _merge_consecutive_bold(body: Tag) -> None:
         if (
             _is_section_header(t1) and _is_section_header(t2)
             and t1.lower() not in _INCOMPLETE_HEADER_WORDS
+            and not (t2 and t2[0].islower())  # lowercase start → word split, must merge
         ):
             continue
         separator = "" if (t1 and t2 and t1[-1].isalpha() and t2[0].islower()) else " "
