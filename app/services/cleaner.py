@@ -1052,15 +1052,18 @@ def _build_clean_html(raw_html: str) -> str:
     _remove_ui_artifacts(body)
     _drop_label_before_heading(body)
     _drop_empty_blocks(body)
+    for b_tag in list(body.find_all("b")):
+        b_tag.name = "strong"
     _enforce_allowed_tags(body)
 
     result = str(body)
     result = re.sub(r"<body[^>]*>|</body>", "", result)
     result = re.sub(r"\n{3,}", "\n\n", result)
     result = re.sub(r"[ \t]+", " ", result)
-    # Ensure a space where a word character is immediately adjacent to an
-    # inline open/close tag boundary (e.g. "right<strong>" → "right <strong>")
-    result = re.sub(r"(\w)(<(?:strong|em|a)(?:\s[^>]*)?>)", r"\1 \2", result)
+    # Ensure a space where a non-whitespace character is immediately adjacent to
+    # an inline open/close tag boundary (e.g. "right<strong>", "end.<strong>")
+    # [^\s>] excludes whitespace and '>' so we never insert inside tag markup.
+    result = re.sub(r"([^\s>])(<(?:strong|em|a)(?:\s[^>]*)?>)", r"\1 \2", result)
     result = re.sub(r"(</(?:strong|em|a)>)(\w)", r"\1 \2", result)
     # Ensure a space between two adjacent closing/opening inline tags
     # (e.g. "</strong><strong>" → "</strong> <strong>")
