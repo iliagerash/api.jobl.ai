@@ -70,6 +70,15 @@ from bs4 import BeautifulSoup, NavigableString, Tag
 
 _TRACKING_RE = re.compile(r"^#[A-Z][A-Z0-9\-]+$")
 
+# Matches a NavigableString whose last word is an article/preposition,
+# signalling that a following <strong> is inline (mid-sentence) rather than
+# a section header.  Used to suppress spurious paragraph-flush in _split_on_brs.
+_MID_SENTENCE_ENDS_RE = re.compile(
+    r"\b(a|an|the|for|in|of|to|with|as|at|by|on|or|and|from|our|their|"
+    r"your|this|that|its|have|has|is|are|was|were|be|been)\s*$",
+    re.IGNORECASE,
+)
+
 _LAYOUT_TAGS = {
     "span", "font", "div", "center",
     "table", "tbody", "thead", "tfoot", "tr", "td", "th",
@@ -127,7 +136,7 @@ _DEADLINE_LABEL_RE = re.compile(
       | applications?\s+(?:will\s+)?close
       | applications?\s+due
       | expir(?:y|ation)\s+date
-      | application\s+window\b.{0,60}close\s+on
+      | application\s+window\b.{0,60}close\b
       | (?:position|job|work)\s+start\s+date
       | (?:hired|offered)\b.{0,120}(?:between|from)\b.{0,120}\band\b
       | open\s+until
@@ -956,10 +965,20 @@ def _split_on_brs(container: Tag, soup: BeautifulSoup) -> None:
             and len(child.get_text(strip=True)) > 4
             and _is_section_header(child.get_text(strip=True))
             and any(isinstance(n, NavigableString) and str(n).strip() for n in bucket)
+            and not _MID_SENTENCE_ENDS_RE.search(
+                next(
+                    (str(n) for n in reversed(bucket)
+                     if isinstance(n, NavigableString) and str(n).strip()),
+                    "",
+                )
+            )
         ):
             # Standalone heading bold encountered after non-empty text (e.g. a
             # job-reference code "GOL00555" in the same run) — flush the text
             # first so they become separate paragraphs.
+            # Guard: skip if the preceding text ends with an article/preposition
+            # (e.g. "opening for a <strong>Role Title</strong>") — the bold is
+            # inline, not a section header.
             _flush()
             bucket = [child]
         else:
