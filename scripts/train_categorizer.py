@@ -53,7 +53,7 @@ def main() -> None:
     parser.add_argument("--data", default="data/categorizer_training.csv", help="Path to categorizer_training.csv (default: data/categorizer_training.csv)")
     parser.add_argument("--output", default="models/categorizer.pkl", help="Path to write .pkl artifact (default: models/categorizer.pkl)")
     parser.add_argument("--n-estimators", type=int, default=500)
-    parser.add_argument("--num-leaves", type=int, default=63)
+    parser.add_argument("--num-leaves", type=int, default=31)
     parser.add_argument("--early-stopping", type=int, default=50, help="Early stopping rounds")
     args = parser.parse_args()
 
@@ -98,6 +98,13 @@ def main() -> None:
         "num_class": num_classes,
         "metric": "multi_logloss",
         "num_leaves": args.num_leaves,
+        "learning_rate": 0.03,
+        "min_data_in_leaf": 10,
+        "lambda_l1": 0.5,
+        "lambda_l2": 0.5,
+        "feature_fraction": 0.8,
+        "bagging_fraction": 0.8,
+        "bagging_freq": 5,
         "n_jobs": -1,
         "force_col_wise": True,
         "verbosity": -1,
