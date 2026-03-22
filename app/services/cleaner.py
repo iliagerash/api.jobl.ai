@@ -1152,14 +1152,23 @@ def _convert_bullet_chars_to_list(body: Tag, soup: BeautifulSoup) -> None:
 def _normalize_inline_whitespace(body: Tag) -> None:
     """Collapse whitespace within text nodes inside <p> and <li> elements.
 
-    Removes leading/trailing whitespace and collapses internal \\n and
-    multiple spaces to a single space in each text node.
+    Collapses internal \\n and multiple spaces to a single space in each text
+    node.  Leading whitespace is stripped only from the first child (block
+    boundary) and trailing whitespace only from the last child, so that a
+    single space between a text node and an adjacent inline tag (e.g.
+    ``our <strong>Southbank</strong>``) is preserved.
     """
     for tag in body.find_all(["p", "li"]):
-        for child in list(tag.children):
+        children = list(tag.children)
+        for i, child in enumerate(children):
             if isinstance(child, NavigableString):
-                normalized = re.sub(r"\s+", " ", str(child)).strip()
-                if normalized != str(child):
+                original = str(child)
+                normalized = re.sub(r"\s+", " ", original)
+                if i == 0:
+                    normalized = normalized.lstrip()
+                if i == len(children) - 1:
+                    normalized = normalized.rstrip()
+                if normalized != original:
                     child.replace_with(NavigableString(normalized))
 
 
