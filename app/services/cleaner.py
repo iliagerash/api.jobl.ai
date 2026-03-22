@@ -1191,17 +1191,19 @@ def _promote_leading_bold_in_p(soup: BeautifulSoup, body: Tag) -> None:
         _rem_raw = "".join(str(c) for c in p.children if c is not first).strip()
         remainder = _rem_raw.lstrip(":").strip()
         is_inline_label = bool(remainder) and (
-            (len(header_text.split()) <= 3 and (":" in first.get_text() or _rem_raw.startswith(":")))
+            # Colon immediately after the bold (label: value pattern), regardless of word count
+            (":" in first.get_text() or _rem_raw.startswith(":"))
             or re.search(r"[\-\u2013\u2014]\s*$", first.get_text())
         )
         if is_inline_label:
             continue
-        # If the remainder starts with a lowercase letter the bold is an inline
-        # subject continuing into a sentence (e.g. "<strong>Unimax</strong> brings
-        # together…"), not a standalone section header.
+        # If the remainder starts with a lowercase letter, a dash, or sentence
+        # punctuation the bold is inline content, not a standalone section header.
+        # Dash examples: "<strong>Build the Future with Us</strong> – This is…"
+        #                "<strong>You will lead with purpose</strong>—guiding…"
         remainder_plain = BeautifulSoup(remainder, "lxml").get_text() if remainder else ""
         first_char = remainder_plain.lstrip()[0:1]
-        if first_char and (first_char.islower() or first_char in ".,;:)("):
+        if first_char and (first_char.islower() or first_char in ".,;:)(\u2013\u2014\u2012-"):
             continue
         h3 = soup.new_tag("h3")
         h3.string = header_text
