@@ -34,36 +34,9 @@ _verified_only: bool = settings.verified_labelling
 app = FastAPI(title="Job Labelling")
 templates = Jinja2Templates(directory=os.path.join(os.path.dirname(__file__), "templates"))
 
-CATEGORIES = [
-    (1,  "Manufacturing & Industrial Production"),
-    (2,  "Automotive"),
-    (3,  "Food & Beverage Manufacturing"),
-    (4,  "Information Technology"),
-    (5,  "Telecommunications & Internet"),
-    (6,  "Construction & Infrastructure"),
-    (7,  "Professional Services"),
-    (8,  "Human Resources"),
-    (9,  "Transportation & Logistics"),
-    (10, "Healthcare & Medical Services"),
-    (11, "Aerospace & Defense"),
-    (12, "Financial Services & Banking"),
-    (13, "Real Estate & Architecture"),
-    (14, "Marketing, Advertising & Media"),
-    (15, "Hospitality & Restaurants"),
-    (16, "Retail & Wholesale"),
-    (17, "Education & Training"),
-    (18, "Energy & Natural Resources"),
-    (19, "Engineering Services"),
-    (20, "Nonprofit & Government"),
-    (21, "Arts, Entertainment & Recreation"),
-    (22, "Legal Services"),
-    (23, "Science & Research"),
-    (24, "Customer Service & Support"),
-    (25, "Security & Surveillance"),
-    (26, "Other"),
-]
-
-CATEGORY_MAP = {cid: title for cid, title in CATEGORIES}
+def _get_categories(db) -> list[tuple[int, str]]:
+    rows = db.execute(text("SELECT id, title FROM categories ORDER BY id")).fetchall()
+    return [(int(r[0]), r[1]) for r in rows]
 
 
 @app.get("/", response_class=HTMLResponse)
@@ -71,6 +44,7 @@ async def index(request: Request) -> HTMLResponse:
     verified_filter = "WHERE verified = true" if _verified_only else ""
     db = SessionLocal()
     try:
+        categories = _get_categories(db)
         counts = db.execute(
             text(f"""
                 SELECT category_id, COUNT(*) AS n,
@@ -93,7 +67,7 @@ async def index(request: Request) -> HTMLResponse:
             "total": count_map.get(cid, {}).get("total", 0),
             "reviewed": count_map.get(cid, {}).get("reviewed", 0),
         }
-        for cid, title in CATEGORIES
+        for cid, title in categories
     ]
 
     return templates.TemplateResponse(
@@ -101,7 +75,7 @@ async def index(request: Request) -> HTMLResponse:
         {
             "request": request,
             "categories": categories_with_counts,
-            "all_categories": CATEGORIES,
+            "all_categories": categories,
         },
     )
 
@@ -150,11 +124,11 @@ class LabelUpdate(BaseModel):
 
 @app.patch("/api/jobs/{job_labelling_id}/label")
 async def update_label(job_labelling_id: int, body: LabelUpdate) -> dict[str, Any]:
-    if body.category_id not in CATEGORY_MAP:
-        raise HTTPException(status_code=422, detail="Invalid category_id")
-
     db = SessionLocal()
     try:
+        valid_ids = {cid for cid, _ in _get_categories(db)}
+        if body.category_id not in valid_ids:
+            raise HTTPException(status_code=422, detail="Invalid category_id")
         result = db.execute(
             text("""
                 UPDATE job_labelling
@@ -166,6 +140,8 @@ async def update_label(job_labelling_id: int, body: LabelUpdate) -> dict[str, An
             {"cat_id": body.category_id, "now": datetime.now(timezone.utc), "id": job_labelling_id},
         ).fetchone()
         db.commit()
+    except HTTPException:
+        raise
     except Exception as exc:
         db.rollback()
         raise HTTPException(status_code=500, detail=str(exc))
