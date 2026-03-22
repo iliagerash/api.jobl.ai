@@ -1537,14 +1537,14 @@ def _build_clean_html(raw_html: str) -> str:
     _wrap_naked_text(soup, body)
     _hoist_h3_from_li(soup, body)
     _dedup_consecutive_h3(body)
+    for b_tag in list(body.find_all("b")):
+        b_tag.name = "strong"
     _normalize_inline_whitespace(body)
     _convert_bullet_chars_to_list(body, soup)
     _remove_nav_lists(body)
     _remove_ui_artifacts(body)
     _drop_label_before_heading(body)
     _drop_empty_blocks(body)
-    for b_tag in list(body.find_all("b")):
-        b_tag.name = "strong"
     _enforce_allowed_tags(body)
 
     result = str(body)
