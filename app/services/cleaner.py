@@ -1202,7 +1202,10 @@ def _promote_leading_bold_in_p(soup: BeautifulSoup, body: Tag) -> None:
         # Dash examples: "<strong>Build the Future with Us</strong> – This is…"
         #                "<strong>You will lead with purpose</strong>—guiding…"
         remainder_plain = BeautifulSoup(remainder, "lxml").get_text() if remainder else ""
-        first_char = remainder_plain.lstrip()[0:1]
+        # Use re.search so that Unicode whitespace (e.g. \u00a0 from &nbsp;) is
+        # skipped before inspecting the first meaningful character.
+        _m = re.search(r"\S", remainder_plain)
+        first_char = _m.group(0) if _m else ""
         if first_char and (first_char.islower() or first_char in ".,;:)(\u2013\u2014\u2012-"):
             continue
         h3 = soup.new_tag("h3")
