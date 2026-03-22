@@ -1364,6 +1364,29 @@ def _dedup_consecutive_h3(body: Tag) -> None:
             h3.decompose()
 
 
+def _demote_false_headings(body: Tag) -> None:
+    """Demote <h3>/<h4> that contain location-style or numeric/code values to <p>.
+
+    ATS systems (e.g. Workday) sometimes emit metadata rows as
+      <p>Office Location</p><h3>Vancouver, BC</h3>
+    where the value that should be plain text is incorrectly marked as a heading.
+    We demote it back to <p> when the text fails the section-header heuristics.
+    """
+    for tag in list(body.find_all(["h3", "h4"])):
+        text = tag.get_text(strip=True)
+        if not text:
+            continue
+        # Location-style "Vancouver, BC" or "New York, NY" —
+        # text ending with a 2-letter uppercase abbreviation after a comma
+        if re.search(r",\s+[A-Z]{2}$", text) and len(text.split()) <= 6:
+            tag.name = "p"
+            continue
+        # Purely numeric/code values like "11754" or "# 11754"
+        if re.fullmatch(r"[\d\s\-\#\.\/]+", text):
+            tag.name = "p"
+            continue
+
+
 def _drop_label_before_heading(body: Tag) -> None:
     """Remove a plain-text <p> ending in ':' when immediately followed by <h3>.
 
@@ -1547,6 +1570,7 @@ def _build_clean_html(raw_html: str) -> str:
     _convert_bullet_chars_to_list(body, soup)
     _remove_nav_lists(body)
     _remove_ui_artifacts(body)
+    _demote_false_headings(body)
     _drop_label_before_heading(body)
     _drop_empty_blocks(body)
     _enforce_allowed_tags(body)
