@@ -974,16 +974,25 @@ def _split_on_brs(container: Tag, soup: BeautifulSoup) -> None:
     new_top: list = []
 
     def _flush() -> None:
+        # Discard whitespace-only NavigableStrings but keep all other nodes so
+        # that internal spacing (e.g. "As the " before a <strong> tag) is
+        # preserved.  Only the leading whitespace of the first text node and the
+        # trailing whitespace of the last are stripped (paragraph boundaries).
+        nodes = [n for n in bucket if not (isinstance(n, NavigableString) and not str(n).strip())]
         parts: list[str] = []
-        for node in bucket:
+        for i, node in enumerate(nodes):
             if isinstance(node, NavigableString):
-                t = str(node).strip()
+                t = str(node)
+                if i == 0:
+                    t = t.lstrip()
+                if i == len(nodes) - 1:
+                    t = t.rstrip()
                 if t:
                     parts.append(t)
             elif isinstance(node, Tag):
                 parts.append(str(node))
         if parts:
-            frag = BeautifulSoup(f'<p>{" ".join(parts)}</p>', "lxml").find("p")
+            frag = BeautifulSoup(f'<p>{"".join(parts)}</p>', "lxml").find("p")
             if frag:
                 new_top.append(frag)
 
@@ -1044,12 +1053,22 @@ def _split_p_on_brs(p: Tag, soup: BeautifulSoup) -> None:
 
     new_paras: list[Tag] = []
     for seg in segments:
-        parts = [
-            str(c) if isinstance(c, Tag) else str(c).strip()
-            for c in seg
-            if not (isinstance(c, NavigableString) and not str(c).strip())
-        ]
-        inner = " ".join(p for p in parts if p).strip()
+        # Preserve internal whitespace (e.g. "As the " before a <strong> tag);
+        # only lstrip the first text node and rstrip the last.
+        nodes = [c for c in seg if not (isinstance(c, NavigableString) and not str(c).strip())]
+        parts: list[str] = []
+        for i, c in enumerate(nodes):
+            if isinstance(c, Tag):
+                parts.append(str(c))
+            else:
+                t = str(c)
+                if i == 0:
+                    t = t.lstrip()
+                if i == len(nodes) - 1:
+                    t = t.rstrip()
+                if t:
+                    parts.append(t)
+        inner = "".join(parts).strip()
         if inner:
             frag = BeautifulSoup(f"<p>{inner}</p>", "lxml").find("p")
             if frag:
