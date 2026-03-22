@@ -693,6 +693,8 @@ def _is_section_header(text: str) -> bool:
         return False
     if re.fullmatch(r"[\d\s\-\+\(\)\.x]{7,}", text):  # phone numbers are not section headers
         return False
+    if text[0].islower():  # inline emphasis like "innovative, results-driven solutions" is not a header
+        return False
     return True
 
 
