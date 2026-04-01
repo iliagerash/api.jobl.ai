@@ -8,7 +8,7 @@ User=webadmin
 WorkingDirectory=/home/webadmin/Jobl/api.jobl.ai
 EnvironmentFile=/home/webadmin/Jobl/api.jobl.ai/.env
 ExecStart=/home/webadmin/Jobl/api.jobl.ai/.venv/bin/uvicorn app.main:app \
-    --host 127.0.0.1 \
+    --host 0.0.0.0 \
     --port 8001 \
     --workers 2
 Restart=on-failure
