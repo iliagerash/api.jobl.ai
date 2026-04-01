@@ -672,7 +672,7 @@ sudo systemctl start jobl-api
 sudo systemctl status jobl-api
 ```
 
-The service runs as `www-data` on `127.0.0.1:8001` with 2 Uvicorn workers.
+The service runs as `webadmin` on `127.0.0.1:8001` with 2 Uvicorn workers.
 
 ### 4. Configure nginx + TLS
 
@@ -690,7 +690,7 @@ sudo systemctl reload nginx
 
 ```bash
 # Example cron: run every 15 minutes
-*/15 * * * * www-data /home/webadmin/Jobl/api.jobl.ai/.venv/bin/jobl-sync >> /var/log/jobl-sync.log 2>&1
+*/15 * * * * /home/webadmin/Jobl/api.jobl.ai/.venv/bin/jobl-sync >> /var/log/jobl-sync.log 2>&1
 ```
 
 ### Logs
