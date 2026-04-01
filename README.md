@@ -643,9 +643,9 @@ Source databases are configured in the `source_countries` table (columns: `db_na
 ### 1. Install application
 
 ```bash
-sudo mkdir -p /opt/jobl/api.jobl.ai
-# Copy repo to /opt/jobl/api.jobl.ai
-cd /opt/jobl/api.jobl.ai
+sudo mkdir -p /home/webadmin/Jobl/api.jobl.ai
+# Copy repo to /home/webadmin/Jobl/api.jobl.ai
+cd /home/webadmin/Jobl/api.jobl.ai
 python3 -m venv .venv
 .venv/bin/pip install -e .
 cp .env.example .env
@@ -690,7 +690,7 @@ sudo systemctl reload nginx
 
 ```bash
 # Example cron: run every 15 minutes
-*/15 * * * * www-data /opt/jobl/api.jobl.ai/.venv/bin/jobl-sync >> /var/log/jobl-sync.log 2>&1
+*/15 * * * * www-data /home/webadmin/Jobl/api.jobl.ai/.venv/bin/jobl-sync >> /var/log/jobl-sync.log 2>&1
 ```
 
 ### Logs

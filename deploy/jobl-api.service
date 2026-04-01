@@ -5,9 +5,9 @@ After=network.target postgresql.service
 [Service]
 Type=simple
 User=www-data
-WorkingDirectory=/opt/jobl/api.jobl.ai
-EnvironmentFile=/opt/jobl/api.jobl.ai/.env
-ExecStart=/opt/jobl/api.jobl.ai/.venv/bin/uvicorn app.main:app \
+WorkingDirectory=/home/webadmin/Jobl/api.jobl.ai
+EnvironmentFile=/home/webadmin/Jobl/api.jobl.ai/.env
+ExecStart=/home/webadmin/Jobl/api.jobl.ai/.venv/bin/uvicorn app.main:app \
     --host 127.0.0.1 \
     --port 8001 \
     --workers 2
