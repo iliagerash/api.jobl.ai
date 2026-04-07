@@ -102,6 +102,7 @@ class ProcessRequest(BaseModel):
     title: str = Field(min_length=1, max_length=512)
     description: str
     original_category: str | None = None
+    full: int = Field(default=1, ge=0, le=1)
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -122,6 +123,26 @@ class ProcessResponse(BaseModel):
 
 @router.post("/process", response_model=ProcessResponse)
 def process(body: ProcessRequest, request: Request) -> ProcessResponse:
+    # 2. Clean description (always, all languages)
+    clean_result = clean_job_description(body.description)
+
+    if not body.full:
+        # Light mode: description cleaning, email and expiry extraction only.
+        # Title normalization, language detection and categorization are skipped.
+        plain_text = BeautifulSoup(clean_result.html, "lxml").get_text(separator=" ")
+        raw_expiry = extract_expiry_raw(body.description)
+        application_email = _extract_application_email(plain_text)
+        description_clean = clean_result.html
+        if application_email:
+            description_clean = description_clean.replace(application_email, "***email_hidden***")
+        return ProcessResponse(
+            title_normalized=body.title,
+            description_clean=description_clean,
+            application_email=application_email,
+            expiry_date=raw_expiry.isoformat() if raw_expiry else None,
+            category=None,
+        )
+
     # 1. Detect language from title + description text
     lang_result = detect_language_code(
         title=body.title,
@@ -131,15 +152,12 @@ def process(body: ProcessRequest, request: Request) -> ProcessResponse:
     )
     lang = lang_result.language_code
 
-    # 2. Clean description (always, all languages)
-    clean_result = clean_job_description(body.description)
-
     if lang not in _EN_FR:
         # Non-EN/FR: description cleanup only, pass original_category through unchanged
         if body.original_category:
             category = CategoryOut(id=None, title=body.original_category)
         else:
-            category = CategoryOut(id=26, title="Other")
+            category = CategoryOut(id=22, title="Other")
         return ProcessResponse(
             title_normalized=body.title,
             description_clean=clean_result.html,

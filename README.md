@@ -377,7 +377,7 @@ All settings are read from environment variables (or `.env`).
 uvicorn app.main:app --reload
 
 # Test EN job (full pipeline, rules-only normalization)
-curl -X POST http://localhost:8000/v1/process \
+curl -X POST http://localhost:8001/v1/process \
   -H "Content-Type: application/json" \
   -d '{
     "title": "Software Engineer - Full Time #ABC123",
@@ -386,7 +386,7 @@ curl -X POST http://localhost:8000/v1/process \
   }'
 
 # Test FR job (expiry auto-detected)
-curl -X POST http://localhost:8000/v1/process \
+curl -X POST http://localhost:8001/v1/process \
   -H "Content-Type: application/json" \
   -d '{
     "title": "Ingénieur logiciel",
@@ -394,7 +394,7 @@ curl -X POST http://localhost:8000/v1/process \
   }'
 
 # Test non-EN/FR (description cleanup only, category passed through)
-curl -X POST http://localhost:8000/v1/process \
+curl -X POST http://localhost:8001/v1/process \
   -H "Content-Type: application/json" \
   -d '{
     "title": "Softwareentwickler",
@@ -531,7 +531,7 @@ With the API running, test categorization quality against random jobs from the d
 
 ```bash
 python scripts/test_process_endpoint.py --limit 100
-python scripts/test_process_endpoint.py --limit 500 --url http://localhost:8000
+python scripts/test_process_endpoint.py --limit 500 --url http://localhost:8001
 ```
 
 Each row prints: job ID, latency, original title → normalized title, and ✓/✗ for email/expiry/category. Final summary shows hit rates and average latency.
