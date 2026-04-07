@@ -208,6 +208,9 @@ def main() -> None:
                 print(f"[{i}/{len(jobs)}] id={job['id']} EXCEPTION: {exc}")
 
     n = len(jobs)
+    if n == 0:
+        print("No jobs fetched — check your --country code (use 2-letter ISO codes, e.g. --country=id,in)")
+        return
     print(f"""
 ─────────────────────────────────────
 Results ({n} jobs)
