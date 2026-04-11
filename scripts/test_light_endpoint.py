@@ -14,6 +14,7 @@ Usage:
 import argparse
 import html as html_lib
 import os
+import re
 import sys
 import time
 
@@ -22,6 +23,19 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 import httpx
 from sqlalchemy import text
 from app.db.session import SessionLocal
+
+_EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
+_DEBUG_CTX = 150  # characters of context to show around an email
+
+
+def _debug_email_context(description: str, email: str, label: str) -> None:
+    idx = description.find(email)
+    if idx == -1:
+        print(f"    [{label}] '{email}' not found verbatim in description")
+        return
+    before = description[max(0, idx - _DEBUG_CTX):idx].replace("\n", " ")
+    after = description[idx + len(email):idx + len(email) + _DEBUG_CTX].replace("\n", " ")
+    print(f"    [{label}] ...{before!r}  >>>>{email}<<<<  {after!r}...")
 
 
 def fetch_jobs(limit: int, countries: list[str] | None = None) -> list[dict]:
@@ -150,6 +164,7 @@ def main() -> None:
     parser.add_argument("--url", default="http://localhost:8001", help="API base URL (default: http://localhost:8001)")
     parser.add_argument("--out", default=None, help="Write HTML report to this file")
     parser.add_argument("--country", default=None, help="Comma-separated country codes to filter (e.g. us,ca)")
+    parser.add_argument("--debug", action="store_true", help="Log email context (150 chars before/after) for regex matches and extracted emails")
     args = parser.parse_args()
 
     countries = [c.strip().upper() for c in args.country.split(",")] if args.country else None
@@ -194,6 +209,18 @@ def main() -> None:
                         f"email={'✓' if has_email else '✗'} "
                         f"expiry={'✓' if has_expiry else '✗'}"
                     )
+
+                    if args.debug:
+                        raw_desc = job["description"] or ""
+                        regex_matches = _EMAIL_RE.findall(raw_desc)
+                        if regex_matches:
+                            for match in regex_matches:
+                                _debug_email_context(raw_desc, match, "regex")
+                        else:
+                            print(f"    [regex] no email found in raw description")
+                        extracted = data.get("application_email")
+                        if extracted:
+                            _debug_email_context(raw_desc, extracted, "extracted")
                 else:
                     stats["error"] += 1
                     error_msg = f"HTTP {resp.status_code}: {resp.text[:120]}"
