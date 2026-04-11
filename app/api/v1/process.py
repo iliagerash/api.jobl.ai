@@ -29,6 +29,18 @@ _APPLY_KEYWORDS_RE = re.compile(
     r"|Bewerbung\w*|bewerben|bewirb\w*|Lebenslauf"
     r"|sende.{0,40}Unterlagen|schicke.{0,40}Unterlagen"
     r"|zukommen\s+lassen"
+    r"|Kontakt\b|Ansprechpartner\w*|Ansprechperson"
+    r"|E-Mail\s*:"
+    r"|Rückfragen|Auskünfte?\w*"
+    r"|Noch\s+Fragen\b|Haben\s+Sie\s+(?:noch\s+)?Fragen\b"
+    r"|Für\s+(?:Rück)?[Ff]ragen\b|Bei\s+[Ff]ragen\b"
+    r"|Fragen\s+beantworten\b"
+    r"|wenden\s+Sie\s+sich\b|melden\s+Sie\s+sich\b"
+    r"|wende\s+(?:dich|Dich)\b|melde\s+(?:dich|Dich)\b"
+    r"|steh[et]n?\s+(?:Ihnen|dir|euch|uns)\b"
+    r"|Personalreferent\w*|Talent\s+Acquisition"
+    r"|(?:per|via|über)\s+E-Mail\b"
+    r"|Du\s+erreichst\b|erreichst\s+(?:Du|mich|uns)\b"
     r")\b",
     re.IGNORECASE,
 )
@@ -61,7 +73,8 @@ _CONTEXT_WINDOW = 250  # characters around the email to search for keywords
 # Keywords that may appear in the local part of an application email address
 _LOCAL_PART_RE = re.compile(
     r"apply|application|careers?|recruit\w*|recrut\w*|hiring|jobs?|emploi|candidat\w*|rh|hr|human.?resources?|people.?culture|contact"
-    r"|bewerbung\w*|bewerber\w*|karriere|personalgewinnung|personalentwicklung|ausbildung",
+    r"|bewerbung\w*|bewerber\w*|karriere|personalgewinnung|personalentwicklung|ausbildung"
+    r"|kontakt|personal",
     re.IGNORECASE,
 )
 
