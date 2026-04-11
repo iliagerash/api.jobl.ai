@@ -41,6 +41,45 @@ _APPLY_KEYWORDS_RE = re.compile(
     r"|Personalreferent\w*|Talent\s+Acquisition"
     r"|(?:per|via|über)\s+E-Mail\b"
     r"|Du\s+erreichst\b|erreichst\s+(?:Du|mich|uns)\b"
+    r"|[Aa]plica\b|[Pp]ostula\b|[Pp]ostúlate\b"
+    r"|[Ee]scr[íi]benos?\b|[Ee]nv[íi]a(?:me|nos)?\b"
+    r"|[Cc]orreo\s*:|[Cc]ontacto\b"
+    r"|[Cc]andidatura\b|[Hh]oja\s+de\s+vida\b"
+    r"|[Rr]eclutando\b|[Rr]eclutamiento\b"
+    r"|send\s+an?\s+email\s+to\b"
+    r"|[Ee]nvi(?:e|ar|[ao])\b|[Ee]nviadas?\b"
+    r"|[Ee]mail\s*:"
+    r"|[Cc]urr[íi]culos?\b|[Cc]\.V\."
+    r"|[Cc]andidaturas?\b|[Cc]andidate-se\b|[Cc]andidatar(?:-se)?\b"
+    r"|[Ii]nteressad[oa]s?\b"
+    r"|[Vv]agas?\b"
+    r"|[Cc]ontacto\b|[Cc]ontacte\b|[Cc]ontate\b"
+    r"|[Rr]ecrutamento\b"
+    r"|[Pp]elo\s+e-?mail\b|[Pp]or\s+e-?mail\b"
+    r"|sollicit\w+"
+    r"|[Ss]tuur\b|[Ss]turen\b"
+    r"|[Mm]ail\w*\b"
+    r"|[Vv]acature[s]?\b"
+    r"|[Vv]raag\b|[Vv]ragen\b"
+    r"|[Ii]nformatie\b|[Ww]erving\b"
+    r"|[Rr]eageer\w*\b|[Pp]ersoneels\w+\b"
+    r"|[Ff]unctie\b"
+    r"|[Рр]езюме\b"
+    r"|[Нн]адсила\w+\b"
+    r"|[Вв]ідправ\w+\b"
+    r"|пиши\b|пишіть\b"
+    r"|зв.язатися\b"
+    r"|лист\w*\s+на\b"
+    r"|βιογραφικ\w+"
+    r"|αποστολ\w+|αποστείλ\w+"
+    r"|στείλ\w+"
+    r"|αίτησ\w+"
+    r"|[Εε]πικοινων\w+"
+    r"|kontakt\w*"
+    r"|ansøg\w+"
+    r"|spørgsmål\b"
+    r"|stilling\w+"
+    r"|rekrutter\w+"
     r")\b",
     re.IGNORECASE,
 )
@@ -61,11 +100,16 @@ _EXCLUDE_KEYWORDS_RE = re.compile(
     r"|equal\s+employment\s+opportunity"
     r"|institutional\s+equity"
     r"|not\s+accept\w*\s+applications?\s+(?:via|by|through|over)\s+email"
+    r"|ejercicio\s+de\s+(?:sus|tus)\s+derechos\b"
+    r"|supresión\b"
+    r"|your\s+personal\s+data\b"
+    r"|dados\s+pessoais\b|lei\s+geral\s+de\s+proteção"
+    r"|persoonsgegevens\b|privacybeleid\b|gegevensbescherming\b"
     r")\b",
     re.IGNORECASE,
 )
 _EXCLUDE_LOCAL_PART_RE = re.compile(
-    r"accommodat|accessib|disability|disabilities|compliance|noreply|no.reply|donotreply|do.not.reply|(?:^|[._-])support|helpdesk|help.desk|fraud|scam|\beeo\b",
+    r"accommodat|accessib|disability|disabilities|compliance|noreply|no.reply|donotreply|do.not.reply|(?:^|[._-])support|helpdesk|help.desk|fraud|scam|\beeo\b|\bdpo\b|privacy|gdpr",
     re.IGNORECASE,
 )
 _CONTEXT_WINDOW = 250  # characters around the email to search for keywords
@@ -74,7 +118,11 @@ _CONTEXT_WINDOW = 250  # characters around the email to search for keywords
 _LOCAL_PART_RE = re.compile(
     r"apply|application|careers?|recruit\w*|recrut\w*|hiring|jobs?|emploi|candidat\w*|rh|hr|human.?resources?|people.?culture|contact"
     r"|bewerbung\w*|bewerber\w*|karriere|personalgewinnung|personalentwicklung|ausbildung"
-    r"|kontakt|personal",
+    r"|kontakt|personal"
+    r"|recursoshumanos|talento"
+    r"|curriculos?|vagas?|selecao|talentos?|oportunidades?"
+    r"|sollicitati\w*|vacatures?|werkenbij|werken"
+    r"|vacancy",
     re.IGNORECASE,
 )
 
