@@ -25,7 +25,7 @@ from sqlalchemy import text
 from app.db.session import SessionLocal
 
 _EMAIL_RE = re.compile(r"[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}")
-_DEBUG_CTX = 150  # characters of context to show around an email
+_DEBUG_CTX = 300  # characters of context to show around an email (>= _CONTEXT_WINDOW=250 in process.py)
 
 
 def _debug_email_context(description: str, email: str, label: str) -> None:
