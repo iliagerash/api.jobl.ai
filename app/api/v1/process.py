@@ -26,6 +26,9 @@ _APPLY_KEYWORDS_RE = re.compile(
     r"|contact|staffing|recruit\w*|inquir\w*|emailing|reach\s+out|more\s+information|learn\s+more"
     r"|postuler|appliquer|candidature|soumettre|envoyer.{0,30}(cv|candidature|courriel)"
     r"|faire.{0,10}demande"
+    r"|Bewerbung\w*|bewerben|bewirb\w*|Lebenslauf"
+    r"|sende.{0,40}Unterlagen|schicke.{0,40}Unterlagen"
+    r"|zukommen\s+lassen"
     r")\b",
     re.IGNORECASE,
 )
@@ -57,7 +60,8 @@ _CONTEXT_WINDOW = 250  # characters around the email to search for keywords
 
 # Keywords that may appear in the local part of an application email address
 _LOCAL_PART_RE = re.compile(
-    r"apply|application|careers?|recruit\w*|recrut\w*|hiring|jobs?|emploi|candidat\w*|rh|hr|human.?resources?|people.?culture|contact",
+    r"apply|application|careers?|recruit\w*|recrut\w*|hiring|jobs?|emploi|candidat\w*|rh|hr|human.?resources?|people.?culture|contact"
+    r"|bewerbung\w*|bewerber\w*|karriere|personalgewinnung|personalentwicklung|ausbildung",
     re.IGNORECASE,
 )
 
