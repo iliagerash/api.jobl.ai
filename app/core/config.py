@@ -25,9 +25,6 @@ class Settings(BaseSettings):
     # Labelling UI
     verified_labelling: bool = False
 
-    # Resumes ingest (job-board submissions for training data)
-    resumes_ingest_token: str | None = None
-
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
     @field_validator("model_dir", "tokenizer_dir", "categorizer_model_path", mode="after")

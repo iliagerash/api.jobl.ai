@@ -2,7 +2,7 @@
 
 FastAPI service that processes raw job postings: cleans HTML descriptions, normalizes job titles, extracts expiry dates and application emails, and categorizes jobs into 26 industry categories.
 
-Includes a background sync worker that pulls jobs from MySQL source databases into PostgreSQL, and a Bearer-authenticated ingest endpoint for external job boards to submit anonymized resume/posting data into the `resumes` table (for future model training).
+Includes a background sync worker that pulls jobs from MySQL source databases into PostgreSQL.
 
 ---
 
@@ -10,9 +10,7 @@ Includes a background sync worker that pulls jobs from MySQL source databases in
 
 - [Architecture](#architecture)
 - [Project Structure](#project-structure)
-- [API Endpoints](#api-endpoints)
-  - [POST /v1/process](#post-v1process)
-  - [POST /v1/resumes](#post-v1resumes)
+- [API Endpoint](#api-endpoint)
 - [Processing Pipeline](#processing-pipeline)
 - [Graceful Degradation](#graceful-degradation)
 - [Database](#database)
@@ -58,9 +56,7 @@ Both the normalizer and categorizer are **optional**. The API starts and serves 
 api.jobl.ai/
 ├── app/
 │   ├── main.py                  # FastAPI app, lifespan (model loading)
-│   ├── core/
-│   │   ├── config.py            # Settings (pydantic-settings, .env)
-│   │   └── auth.py              # Bearer token check for resumes ingest
+│   ├── core/config.py           # Settings (pydantic-settings, .env)
 │   ├── db/
 │   │   ├── base.py              # SQLAlchemy DeclarativeBase
 │   │   └── session.py           # Engine + get_db() dependency
@@ -69,7 +65,7 @@ api.jobl.ai/
 │   │   ├── category_map.py      # category_map table
 │   │   ├── country.py           # countries lookup table
 │   │   ├── job.py               # jobs table
-│   │   ├── resume.py            # resumes table (external board ingest)
+│   │   ├── resume.py            # resumes table (training data, populated offline)
 │   │   ├── source_country.py    # source MySQL DB → country mapping
 │   │   └── sync_state.py        # sync cursor (last synced job ID per DB)
 │   ├── services/
@@ -79,8 +75,7 @@ api.jobl.ai/
 │   │   └── categorizer.py       # LightGBM job categorizer
 │   └── api/v1/
 │       ├── health.py            # GET /health
-│       ├── process.py           # POST /process
-│       └── resumes.py           # POST /resumes (Bearer auth)
+│       └── process.py           # POST /process
 ├── sync/
 │   ├── config.py                # SyncSettings (SOURCE_DB_*, DATABASE_URL)
 │   ├── worker.py                # SyncWorker: MySQL → PostgreSQL
@@ -110,7 +105,7 @@ api.jobl.ai/
 
 ---
 
-## API Endpoints
+## API Endpoint
 
 ### `POST /v1/process`
 
@@ -157,99 +152,6 @@ api.jobl.ai/
 `category.confidence` is the model's softmax probability for the predicted class (0–1). It is `null` for non-EN/FR jobs where the model is not run.
 
 For non-EN/FR jobs, `category` is `{"id": null, "title": "<original_category>", "confidence": null}` if `original_category` was provided.
-
----
-
-### `POST /v1/resumes`
-
-Authenticated ingest for external job boards. Submissions are stored in the `resumes` table for future anonymization and model training. This endpoint does **not** run the HTML cleaning or categorization pipeline — it only persists the payload and auto-detects `language_code`.
-
-**Authentication:** `Authorization: Bearer <RESUMES_INGEST_TOKEN>`. Returns `401` if the token is missing or invalid, and `503` if `RESUMES_INGEST_TOKEN` is not configured.
-
-#### Request
-
-```json
-{
-  "source_website": "example-board.com",
-  "external_id": 12345,
-  "title": "Software Engineer",
-  "description": "We are hiring a backend engineer...",
-  "city_title": "Berlin",
-  "region_title": "Berlin",
-  "country_code": "DE",
-  "salary": 75000.00,
-  "salary_period": "year",
-  "salary_currency": "EUR",
-  "contract": "full-time",
-  "published_at": "2026-06-01T10:00:00Z",
-  "is_remote": true
-}
-```
-
-| Field | Type | Required | Description |
-|---|---|---|---|
-| `source_website` | string (≤128) | yes | Originating job board or site identifier |
-| `external_id` | integer | yes | Job ID on the source site |
-| `title` | string (≤255) | yes | Job title |
-| `description` | string | no | Raw description text |
-| `city_title` | string (≤255) | no | City name |
-| `region_title` | string (≤255) | no | Region/state name |
-| `country_code` | string (2 chars) | no | ISO 3166-1 alpha-2 |
-| `salary` | number | no | Single salary amount (`NUMERIC(15,2)`) |
-| `salary_period` | string (≤20) | no | e.g. `year`, `month`, `hour` |
-| `salary_currency` | string (3 chars) | no | ISO 4217 |
-| `contract` | string (≤24) | no | Employment type |
-| `published_at` | datetime (ISO 8601) | no | Publication timestamp (timezone-aware) |
-| `is_remote` | boolean | no | Default `false` |
-
-`language_code` is **not** accepted in the request; it is assigned server-side via `app/services/language.py` (same detection logic as `/v1/process`, using `source_website` as the source hint).
-
-Duplicate `(source_website, external_id)` pairs return **409 Conflict**.
-
-#### Response (`201 Created`)
-
-```json
-{
-  "id": 1,
-  "language_code": "de"
-}
-```
-
-| Field | Type | Description |
-|---|---|---|
-| `id` | integer | Assigned primary key |
-| `language_code` | string \| null | Detected language code, or `null` if detection failed |
-
-#### Generate an ingest token
-
-The API does not mint tokens. Generate a secret locally and set it in `.env`:
-
-```bash
-openssl rand -hex 32
-# or: python3 -c "import secrets; print(secrets.token_urlsafe(32))"
-```
-
-```env
-RESUMES_INGEST_TOKEN=<paste-value-here>
-```
-
-Restart the API after changing `.env`. Share the same bearer value with each trusted job board.
-
-#### Example
-
-```bash
-curl -X POST http://localhost:8001/v1/resumes \
-  -H "Authorization: Bearer $RESUMES_INGEST_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "source_website": "example-board.com",
-    "external_id": 12345,
-    "title": "Software Engineer",
-    "description": "We are hiring...",
-    "country_code": "DE",
-    "is_remote": true
-  }'
-```
 
 ---
 
@@ -392,7 +294,7 @@ PostgreSQL. Schema managed by Alembic.
 | `countries` | Country lookup (code, name, alternate_names, language_codes) |
 | `source_countries` | MySQL source DB → country/currency/config mapping |
 | `sync_state` | Sync cursor: last synced job ID per (source_db, destination) pair |
-| `resumes` | Ingested postings from external job boards (`source_website` + `external_id`, location, salary, `language_code`) |
+| `resumes` | Anonymized postings for model training (`source_website` + `external_id`, location, salary, `language_code`); populated outside the API |
 
 **`resumes` columns:** `id`, `source_website`, `external_id`, `title`, `description`, `city_title`, `region_title`, `country_code`, `salary`, `salary_period`, `salary_currency`, `contract`, `published_at`, `is_remote`, `language_code`. Unique on `(source_website, external_id)`.
 
@@ -456,7 +358,6 @@ All settings are read from environment variables (or `.env`).
 | `MAX_NEW_TOKENS` | `32` | Max tokens generated per title |
 | `MAX_INPUT_LENGTH` | `128` | Input truncation length |
 | `CATEGORIZER_MODEL_PATH` | — | Path to `categorizer.pkl` artifact |
-| `RESUMES_INGEST_TOKEN` | — | Bearer token for `POST /v1/resumes`; endpoint returns 503 if unset |
 | `VERIFIED_LABELLING` | `false` | Labelling UI: show only `verified=true` rows when `true` |
 
 **Sync worker only:**
@@ -504,18 +405,6 @@ curl -X POST http://localhost:8001/v1/process \
     "title": "Softwareentwickler",
     "description": "<div><span>Wir suchen.</span></div>",
     "original_category": "IT"
-  }'
-
-# Resumes ingest (requires RESUMES_INGEST_TOKEN in .env)
-curl -X POST http://localhost:8001/v1/resumes \
-  -H "Authorization: Bearer $RESUMES_INGEST_TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "source_website": "example-board.com",
-    "external_id": 12345,
-    "title": "Software Engineer",
-    "description": "We are hiring...",
-    "country_code": "DE"
   }'
 ```
 
@@ -765,7 +654,7 @@ cd /home/webadmin/Jobl/api.jobl.ai
 python3 -m venv .venv
 .venv/bin/pip install -e .
 cp .env.example .env
-$EDITOR .env   # set DATABASE_URL, model paths, RESUMES_INGEST_TOKEN, etc.
+$EDITOR .env   # set DATABASE_URL, model paths, etc.
 ```
 
 ### 2. Run database migrations and seed data
