@@ -22,6 +22,7 @@ Includes a background sync worker that pulls jobs from MySQL source databases in
   - [Hyperparameter Tuning](#2a-tune-hyperparameters-optional)
 - [Manual Labelling](#manual-labelling)
 - [Sync Worker](#sync-worker)
+- [Resume XML Import](#resume-xml-import)
 - [Production Deployment](#production-deployment)
 
 ---
@@ -80,7 +81,9 @@ api.jobl.ai/
 │   ├── config.py                # SyncSettings (SOURCE_DB_*, DATABASE_URL)
 │   ├── worker.py                # SyncWorker: MySQL → PostgreSQL
 │   ├── main.py                  # jobl-sync entry point
-│   └── language_backfill.py     # jobl-sync-language-backfill entry point
+│   ├── language_backfill.py     # jobl-sync-language-backfill entry point
+│   ├── resume_xml_worker.py     # XML feed → resumes table importer
+│   └── resume_xml_import.py     # jobl-sync-resumes entry point
 ├── alembic/
 │   └── versions/                # 22 migrations (linear chain)
 ├── labelling/
@@ -294,7 +297,7 @@ PostgreSQL. Schema managed by Alembic.
 | `countries` | Country lookup (code, name, alternate_names, language_codes) |
 | `source_countries` | MySQL source DB → country/currency/config mapping |
 | `sync_state` | Sync cursor: last synced job ID per (source_db, destination) pair |
-| `resumes` | Anonymized postings for model training (`source_website` + `external_id`, location, salary, `language_code`); populated outside the API |
+| `resumes` | Anonymized postings for model training (`source_website` + `external_id`, location, salary, `language_code`); populated by `jobl-sync-resumes` |
 
 **`resumes` columns:** `id`, `source_website`, `external_id`, `title`, `description`, `city_title`, `region_title`, `country_code`, `salary`, `salary_period`, `salary_currency`, `contract`, `published_at`, `is_remote`, `language_code`. Unique on `(source_website, external_id)`.
 
@@ -372,6 +375,14 @@ All settings are read from environment variables (or `.env`).
 | `SOURCE_DB_SSL_DISABLED` | `true` | Disable MySQL SSL |
 | `EXPORT_DESTINATION` | `jobl.ai` | Destination tag written to `sync_state` |
 | `SYNC_BATCH_SIZE` | `1000` | Jobs per sync batch |
+
+**Resume XML import only:**
+
+| Variable | Default | Description |
+|---|---|---|
+| `RESUME_XML_FEEDS_DIR` | — | Directory of per-board XML feeds (required for import) |
+| `RESUME_XML_LOOKBACK_HOURS` | `24` | Only process `*.xml` files modified within this window |
+| `RESUME_XML_BATCH_SIZE` | `500` | Rows per DB insert batch |
 
 ---
 
@@ -643,6 +654,77 @@ Source databases are configured in the `source_countries` table (columns: `db_na
 
 ---
 
+## Resume XML Import
+
+Imports resume XML feeds from `RESUME_XML_FEEDS_DIR` into the `resumes` table. Each job board uploads a file like `au.workus.org.xml`.
+
+### Feed format
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<resumes>
+    <website><![CDATA[au.workus.org]]></website>
+    <resume>
+        <id><![CDATA[12345]]></id>
+        <country_code><![CDATA[AU]]></country_code>
+        <city_title><![CDATA[Melbourne]]></city_title>
+        <region_title><![CDATA[Victoria]]></region_title>
+        <position><![CDATA[Environmental Professional]]></position>
+        <description><![CDATA[...]]></description>
+        <salary><![CDATA[80000.00]]></salary>
+        <currency><![CDATA[AUD]]></currency>
+        <salary_period><![CDATA[year]]></salary_period>
+        <contract_code><![CDATA[full_time]]></contract_code>
+        <remote><![CDATA[0]]></remote>
+        <created_at><![CDATA[2026-06-05 14:17:19]]></created_at>
+    </resume>
+</resumes>
+```
+
+Field mapping:
+
+| XML element | `resumes` column |
+|---|---|
+| `<website>` | `source_website` |
+| `<id>` | `external_id` |
+| `<position>` | `title` |
+| `<description>` | `description` |
+| `<city_title>` | `city_title` |
+| `<region_title>` | `region_title` |
+| `<country_code>` | `country_code` |
+| `<salary>` | `salary` |
+| `<salary_period>` | `salary_period` |
+| `<currency>` | `salary_currency` |
+| `<contract_code>` | `contract` |
+| `<created_at>` | `published_at` |
+| `<remote>` | `is_remote` (`1` / `true` → remote) |
+
+Each `<resume>` must include `<id>` (numeric), non-empty `<position>`, and non-empty `<description>`. Rows missing any of these are skipped. `language_code` is detected on import via `app/services/language.py`.
+
+Only resumes not already present (`source_website` + `external_id`) are inserted. By default, only `*.xml` files modified in the last 24 hours are scanned.
+
+```bash
+# Import feeds changed in the last 24 hours (default)
+jobl-sync-resumes
+
+# Initial backfill — process every XML file in the directory
+jobl-sync-resumes --all-files
+
+# Import one board only
+jobl-sync-resumes --all-files --file=au.workus.org.xml
+
+# Custom lookback window and batch size
+jobl-sync-resumes --lookback-hours=48 --batch-size=1000
+```
+
+Example cron (hourly, after boards upload feeds):
+
+```bash
+15 * * * * cd /home/webadmin/Jobl/api.jobl.ai && .venv/bin/jobl-sync-resumes >> /home/webadmin/Jobl/logs/jobl-sync-resumes.log 2>&1
+```
+
+---
+
 ## Production Deployment
 
 ### 1. Install application
@@ -691,11 +773,16 @@ sudo certbot --nginx -d api.jobl.ai
 sudo systemctl reload nginx
 ```
 
-### 5. Sync worker (cron or systemd timer)
+### 5. Sync workers (cron or systemd timer)
 
 ```bash
-# Example cron: run every 15 minutes
-*/15 * * * * /home/webadmin/Jobl/api.jobl.ai/.venv/bin/jobl-sync >> /var/log/jobl-sync.log 2>&1
+mkdir -p /home/webadmin/Jobl/logs
+
+# Example cron: run every 12 hours (00:00 and 12:00)
+0 */12 * * * cd /home/webadmin/Jobl/api.jobl.ai && .venv/bin/jobl-sync >> /home/webadmin/Jobl/logs/jobl-sync.log 2>&1
+
+# Example cron: import resume XML feeds hourly
+15 * * * * cd /home/webadmin/Jobl/api.jobl.ai && .venv/bin/jobl-sync-resumes >> /home/webadmin/Jobl/logs/jobl-sync-resumes.log 2>&1
 ```
 
 ### Logs
@@ -704,6 +791,7 @@ sudo systemctl reload nginx
 # API logs
 sudo journalctl -u jobl-api -f
 
-# Sync logs (if running via cron)
-tail -f /var/log/jobl-sync.log
+# Sync logs (cron)
+tail -f /home/webadmin/Jobl/logs/jobl-sync.log
+tail -f /home/webadmin/Jobl/logs/jobl-sync-resumes.log
 ```

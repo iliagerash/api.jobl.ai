@@ -38,6 +38,7 @@ build-backend = "setuptools.build_meta"
 [project.scripts]
 jobl-sync = "sync.main:run"
 jobl-sync-language-backfill = "sync.language_backfill:run"
+jobl-sync-resumes = "sync.resume_xml_import:run"
 
 [tool.setuptools]
 package-dir = {"" = "."}
