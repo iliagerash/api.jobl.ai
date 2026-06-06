@@ -779,10 +779,10 @@ sudo systemctl reload nginx
 mkdir -p /home/webadmin/Jobl/logs
 
 # Example cron: run every 12 hours (00:00 and 12:00)
-0 */12 * * * cd /home/webadmin/Jobl/api.jobl.ai && .venv/bin/jobl-sync >> /home/webadmin/Jobl/logs/jobl-sync.log 2>&1
+10 */12 * * * cd /home/webadmin/Jobl/api.jobl.ai && .venv/bin/jobl-sync >> /home/webadmin/Jobl/logs/jobl-sync.log 2>&1
 
 # Example cron: import resume XML feeds hourly
-15 * * * * cd /home/webadmin/Jobl/api.jobl.ai && .venv/bin/jobl-sync-resumes >> /home/webadmin/Jobl/logs/jobl-sync-resumes.log 2>&1
+40 * * * * cd /home/webadmin/Jobl/api.jobl.ai && .venv/bin/jobl-sync-resumes >> /home/webadmin/Jobl/logs/jobl-sync-resumes.log 2>&1
 ```
 
 ### Logs
