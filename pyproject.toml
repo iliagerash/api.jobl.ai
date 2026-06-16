@@ -30,6 +30,12 @@ dev = [
 scripts = [
   "optuna>=3.6.0",
 ]
+# ML pipeline (ml/scripts/) — offline data prep + training, not needed to serve
+# the API. Grows through the implementation plan's phases (sentence-transformers,
+# peft, trl, vllm, onnxruntime, llama-cpp-python land here as each phase needs them).
+ml = [
+  "datasketch>=1.6.5",
+]
 
 [build-system]
 requires = ["setuptools>=68.0"]
