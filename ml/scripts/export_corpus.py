@@ -114,7 +114,7 @@ def export_table(db, model, fields: list[str], out_path: str, *, limit: int | No
     return count
 
 
-def print_sample(out_path: str, n: int) -> None:
+def print_sample(out_path: str, n: int, *, description_chars: int = 300) -> None:
     with open(out_path, encoding="utf-8") as f:
         lines = f.readlines()
     if not lines:
@@ -124,7 +124,10 @@ def print_sample(out_path: str, n: int) -> None:
     print(f"\n--- {n} random sample rows from {out_path} (spot-check these) ---")
     for line in sample:
         record = json.loads(line)
-        print(json.dumps(record, indent=2, ensure_ascii=False)[:1000])
+        description = record.get("description")
+        if description and len(description) > description_chars:
+            record["description"] = description[:description_chars] + f"... [{len(description)} chars total]"
+        print(json.dumps(record, indent=2, ensure_ascii=False))
         print("---")
 
 
