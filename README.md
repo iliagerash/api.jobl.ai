@@ -297,7 +297,7 @@ PostgreSQL. Schema managed by Alembic.
 | `countries` | Country lookup (code, name, alternate_names, language_codes) |
 | `source_countries` | MySQL source DB → country/currency/config mapping |
 | `sync_state` | Sync cursor: last synced job ID per (source_db, destination) pair |
-| `resumes` | Anonymized postings for model training (`source_website` + `external_id`, location, salary, `language_code`); populated by `jobl-sync-resumes` |
+| `resumes` | Raw resume postings for model training (`source_website` + `external_id`, location, salary, `language_code`); populated by `jobl-sync-resumes`. **Not anonymized** — descriptions may contain names, emails, phone numbers, addresses; PII scrubbing happens downstream in the ML pipeline's data-prep step, not at ingest |
 
 **`resumes` columns:** `id`, `source_website`, `external_id`, `title`, `description`, `city_title`, `region_title`, `country_code`, `salary`, `salary_period`, `salary_currency`, `contract`, `published_at`, `is_remote`, `language_code`. Unique on `(source_website, external_id)`.
 
