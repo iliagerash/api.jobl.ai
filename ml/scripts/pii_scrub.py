@@ -187,6 +187,20 @@ _NER_BLOCKLIST = frozenset(w.lower() for w in [
     "Dementia", "Motived", "Key", "Suite", "Maintenance",
 ])
 
+# Common ALL CAPS resume section headers — not person names.
+_HEADER_BLOCKLIST = frozenset(w.lower() for w in [
+    "Professional", "Summary", "Career", "Objective", "Experience",
+    "Education", "Skills", "Qualifications", "Profile", "References",
+    "Referee", "Referees", "Certifications", "Training", "History",
+    "Work", "Employment", "Background", "Core", "Competencies",
+    "Personal", "Details", "Information", "Contact", "Statement",
+    "Heavy", "Duty", "Mechanic", "Community", "Development", "Officer",
+    "Technical", "Specialist", "Coordinator", "Lead", "Head",
+    "Electrical", "Technician", "Civil", "Mechanical", "Software",
+    "Project", "General", "Operations", "Service", "Account",
+    "Warehouse", "Retail", "Kitchen", "Cleaning", "Hospitality",
+])
+
 
 def _is_plausible_name(text: str) -> bool:
     """Filter NER PERSON entities to reduce false positives.
@@ -341,33 +355,38 @@ class PiiScrubber:
                 if ent.label_ in ("PER", "PERSON") and _is_plausible_name(ent.text):
                     _add(ent.start_char, ent.end_char, "NAME")
 
-            # Layer 2b: re-run NER on a title-cased copy to catch ALL CAPS names
-            # that spaCy's models (trained on mixed-case) miss entirely.
-            # Map detected spans back to the original text positions.
-            if any(c.isupper() for c in text[:500]):
-                titlecased = text.title()
-                if titlecased != text:
-                    doc_tc = nlp(titlecased)
-                    for ent in doc_tc.ents:
-                        if ent.label_ in ("PER", "PERSON") and _is_plausible_name(ent.text):
-                            orig_fragment = text[ent.start_char:ent.end_char]
-                            if orig_fragment.isupper() or orig_fragment != ent.text:
-                                _add(ent.start_char, ent.end_char, "NAME")
+            # Layer 2b: re-run NER on title-cased ALL CAPS LINES ONLY to catch
+            # names like "KILLOL VINODRAI RAVAL" that spaCy misses in uppercase.
+            # Only title-cases lines that are fully uppercase — avoids converting
+            # normal mixed-case text which caused massive false positives in v3.
+            for line in text.split("\n"):
+                stripped = line.strip()
+                if not stripped or stripped != stripped.upper() or len(stripped) < 4:
+                    continue
+                titlecased_line = stripped.title()
+                if titlecased_line == stripped:
+                    continue
+                doc_tc = nlp(titlecased_line)
+                line_start = text.index(stripped)
+                for ent in doc_tc.ents:
+                    if ent.label_ in ("PER", "PERSON") and _is_plausible_name(ent.text):
+                        _add(line_start + ent.start_char, line_start + ent.end_char, "NAME")
 
         # Layer 2c: header-line heuristic for ALL CAPS names at the top of resumes.
-        # Lines in the first 500 chars that are 2-5 ALL CAPS words and contain
+        # Lines in the first 300 chars that are 2-4 ALL CAPS words and contain
         # only letters/spaces/hyphens/periods are almost always the person's name.
-        for line in text[:500].split("\n"):
+        for line in text[:300].split("\n"):
             stripped = line.strip()
             if not stripped or len(stripped) < 4:
                 continue
             words = stripped.split()
-            if 2 <= len(words) <= 5 and stripped == stripped.upper() and all(
+            if 2 <= len(words) <= 4 and stripped == stripped.upper() and all(
                 w.replace("-", "").replace(".", "").replace("'", "").isalpha() for w in words
             ):
                 if not any(w.lower() in _NER_BLOCKLIST for w in words):
-                    start = text.index(stripped)
-                    _add(start, start + len(stripped), "NAME")
+                    if not any(w.lower() in _HEADER_BLOCKLIST for w in words):
+                        start = text.index(stripped)
+                        _add(start, start + len(stripped), "NAME")
 
         # Layer 3: pattern-based name detection (catches names NER may miss)
         for m in NAME_INTRO_RE.finditer(text):
