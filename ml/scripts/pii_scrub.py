@@ -180,6 +180,11 @@ _NER_BLOCKLIST = frozenset(w.lower() for w in [
     "Hobart", "Altman", "Solon", "Bhatbhatni",
     # Generic words
     "Fluids", "Certificates", "Resident", "Engineer",
+    # v3 additions from second sample review
+    "Kitchen", "Hand", "Marble", "Admin", "Café", "Cafe",
+    "Django", "Maximo", "Warehouse", "Pick", "Detail",
+    "Graduate", "Rounder", "Intune", "Skid", "Steer",
+    "Dementia", "Motived", "Key", "Suite", "Maintenance",
 ])
 
 
@@ -335,6 +340,34 @@ class PiiScrubber:
             for ent in doc.ents:
                 if ent.label_ in ("PER", "PERSON") and _is_plausible_name(ent.text):
                     _add(ent.start_char, ent.end_char, "NAME")
+
+            # Layer 2b: re-run NER on a title-cased copy to catch ALL CAPS names
+            # that spaCy's models (trained on mixed-case) miss entirely.
+            # Map detected spans back to the original text positions.
+            if any(c.isupper() for c in text[:500]):
+                titlecased = text.title()
+                if titlecased != text:
+                    doc_tc = nlp(titlecased)
+                    for ent in doc_tc.ents:
+                        if ent.label_ in ("PER", "PERSON") and _is_plausible_name(ent.text):
+                            orig_fragment = text[ent.start_char:ent.end_char]
+                            if orig_fragment.isupper() or orig_fragment != ent.text:
+                                _add(ent.start_char, ent.end_char, "NAME")
+
+        # Layer 2c: header-line heuristic for ALL CAPS names at the top of resumes.
+        # Lines in the first 500 chars that are 2-5 ALL CAPS words and contain
+        # only letters/spaces/hyphens/periods are almost always the person's name.
+        for line in text[:500].split("\n"):
+            stripped = line.strip()
+            if not stripped or len(stripped) < 4:
+                continue
+            words = stripped.split()
+            if 2 <= len(words) <= 5 and stripped == stripped.upper() and all(
+                w.replace("-", "").replace(".", "").replace("'", "").isalpha() for w in words
+            ):
+                if not any(w.lower() in _NER_BLOCKLIST for w in words):
+                    start = text.index(stripped)
+                    _add(start, start + len(stripped), "NAME")
 
         # Layer 3: pattern-based name detection (catches names NER may miss)
         for m in NAME_INTRO_RE.finditer(text):
