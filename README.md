@@ -1014,6 +1014,15 @@ Requires SSH key auth to the remote host. Each phase creates the remote director
 
 **Gate:** dry-run completes without SSH errors; verify at least one test file is accessible on the remote host.
 
+**Companion: `pull_data.sh`** — the reverse direction. Run on the A100 at the start of Day 1 to pull training data from the CPU server:
+
+```bash
+export PULL_REMOTE_HOST=webadmin@cpu-server.com
+export PULL_REMOTE_BASE=/home/webadmin/Jobl/api.jobl.ai
+./ml/scripts/pull_data.sh              # pulls interim data, splits, scripts, configs
+python -u ml/scripts/download_models.py   # then download models from HuggingFace directly
+```
+
 ### Pipeline Order
 
 Steps must run in this order since each reads the previous step's output:
