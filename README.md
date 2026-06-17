@@ -795,3 +795,139 @@ sudo journalctl -u jobl-api -f
 tail -f /home/webadmin/Jobl/logs/jobl-sync.log
 tail -f /home/webadmin/Jobl/logs/jobl-sync-resumes.log
 ```
+
+---
+
+## ML Pipeline — Phase 0 Data Prep
+
+Offline scripts for preparing training data for the matching pipeline (bi-encoder, reranker, extractor). These live in `ml/scripts/` and operate on JSONL files in `ml/data/`. They do not affect the production API.
+
+### Setup
+
+```bash
+# Install ML dependencies (adds datasketch, spacy, fasttext-wheel)
+pip install -e ".[ml]"
+
+# Download spaCy NER models (for PII scrubbing)
+python -m spacy download en_core_web_sm
+python -m spacy download es_core_news_sm
+python -m spacy download pt_core_news_sm
+python -m spacy download fr_core_news_sm
+
+# Download fastText language ID model (for language detection)
+wget -P ml/models/ https://dl.fbaipublicfiles.com/fasttext/supervised-models/lid.176.bin
+```
+
+### Step 1 — Export Corpus
+
+Exports the `jobs` and `resumes` tables from PostgreSQL into JSONL. Reuses the existing SQLAlchemy models (`app/models/job.py`, `app/models/resume.py`). Streams rows with a server-side cursor to avoid loading ~1.5M jobs into memory.
+
+```bash
+python -u ml/scripts/export_corpus.py
+python -u ml/scripts/export_corpus.py --table jobs --limit 1000   # test run
+python -u ml/scripts/export_corpus.py --sample 20                 # spot-check
+```
+
+| Output | Description |
+|---|---|
+| `ml/data/raw/jobs.jsonl` | ~1.5M job postings with all fields (title, description, country, salary, category, etc.) |
+| `ml/data/raw/resumes.jsonl` | ~225K resumes with all fields (title, description, location, salary, etc.) |
+
+### Step 2 — Deduplicate Jobs
+
+Three-pass deduplication of the jobs corpus: exact duplicates dropped by SHA-256 content hash, near-duplicates flagged via MinHash+LSH (Jaccard similarity over 5-word shingles). Near-duplicates are flagged (`is_near_duplicate`, `near_duplicate_of`), not dropped — they feed the `is_duplicate_signal` field in the extractor's training schema.
+
+```bash
+python -u ml/scripts/dedup.py
+python -u ml/scripts/dedup.py --skip-near-dup     # exact dedup only, faster
+python -u ml/scripts/dedup.py --threshold 0.85    # stricter near-dup match
+```
+
+| Output | Description |
+|---|---|
+| `ml/data/interim/jobs.jsonl` | Deduped jobs with `is_near_duplicate` and `near_duplicate_of` fields |
+| `ml/data/interim/near_dup_sample.jsonl` | Up to 50 near-dup pairs for manual sanity-check |
+
+**Gate:** log dedup ratio; sanity-check flagged near-dup pairs manually.
+
+### Step 3 — PII-Scrub Resumes
+
+Strips personally identifiable information (names, emails, phones, addresses, URLs) from resume descriptions before any training data is constructed. Uses spaCy NER (language-specific models for EN/ES/PT/FR) plus regex patterns for structured PII, with a validation filter to suppress common false positives.
+
+Handles ALL CAPS names (common resume header convention) via NER on title-cased ALL CAPS lines plus a header-line heuristic.
+
+```bash
+python -u ml/scripts/pii_scrub.py --sample 200   # gate review first
+python -u ml/scripts/pii_scrub.py                 # full corpus
+```
+
+| Output | Description |
+|---|---|
+| `ml/data/interim/resumes.jsonl` | PII-scrubbed resumes with `[NAME]`, `[EMAIL]`, `[PHONE]`, `[URL]`, `[ADDRESS]` placeholders |
+| `ml/data/interim/pii_scrub_sample.jsonl` | Before/after pairs for manual gate review (with `--sample`) |
+
+**Gate (hard blocker):** manually review 200 scrubbed samples before proceeding. Confirm no PII leakage remains; accept that some over-tagging of non-PII content is tolerable.
+
+### Step 4 — Language Detection
+
+Runs fastText `lid.176.bin` (176 languages) over all jobs and resumes, adding `language_fasttext` and `language_confidence` fields. The existing `language_code` field (from the sync pipeline's langid, covering ~10 languages) is preserved unchanged — it's the baseline for comparison.
+
+```bash
+python -u ml/scripts/lang_detect.py
+python -u ml/scripts/lang_detect.py --table jobs     # jobs only
+python -u ml/scripts/lang_detect.py --table resumes   # resumes only
+```
+
+Updates `ml/data/interim/jobs.jsonl` and `ml/data/interim/resumes.jsonl` in place.
+
+**Gate:** check language distribution and confidence histogram in the output. Flag low-confidence (<0.5) records — these get tagged as `unknown` in the locale prefix during training.
+
+### Step 4b — Classify Resumes by Type
+
+Classifies resumes as `full_cv`, `cover_letter`, or `minimal` based on text length and structural heuristics (section headers, bullet points, line count). No ML needed — pure regex + length checks.
+
+Many resumes in the corpus are actually short cover letters addressed to specific employers (a consequence of job board submission flows). This classification enables downstream steps to handle them differently:
+- **Bi-encoder/reranker training:** use all types (the model should match based on whatever text is available)
+- **Extractor training:** weight/stratify by type so the teacher doesn't waste labeling budget on minimal-text resumes that produce mostly-null extractions
+- **Validation:** ensure a representative mix of types
+
+```bash
+python -u ml/scripts/classify_resumes.py
+```
+
+Updates `ml/data/interim/resumes.jsonl` in place, adding a `resume_type` field (`full_cv` / `cover_letter` / `minimal`).
+
+### Step 5 — Stratified Train/Val Split
+
+Splits jobs and resumes by time (not random) into train and validation pools. The oldest 90% go to train, the most recent 10% to val. If the val set covers fewer than 15 countries, records from underrepresented countries are augmented from the train set.
+
+The val pools are where Phase 1's teacher labeling draws validation pairs from; the actual (resume, job, score) triples are constructed during teacher labeling, not here.
+
+```bash
+python -u ml/scripts/make_splits.py
+python -u ml/scripts/make_splits.py --val-fraction 0.15 --min-countries 20
+```
+
+| Output | Description |
+|---|---|
+| `ml/data/splits/train_pool_jobs.jsonl` | Older 90% of deduped+lang-tagged jobs |
+| `ml/data/splits/val_pool_jobs.jsonl` | Most recent 10% of jobs |
+| `ml/data/splits/train_pool_resumes.jsonl` | Older 90% of PII-scrubbed+lang-tagged resumes |
+| `ml/data/splits/val_pool_resumes.jsonl` | Most recent 10% of resumes |
+
+**Gate:** val set spans ≥15 distinct country codes (script prints GATE PASSED/FAILED explicitly).
+
+### Pipeline Order
+
+Steps must run in this order since each reads the previous step's output:
+
+```
+1.  export_corpus.py       →  ml/data/raw/{jobs,resumes}.jsonl
+2.  dedup.py               →  ml/data/interim/jobs.jsonl
+3.  pii_scrub.py           →  ml/data/interim/resumes.jsonl
+4.  lang_detect.py         →  updates interim/{jobs,resumes}.jsonl in place
+4b. classify_resumes.py    →  updates interim/resumes.jsonl in place (adds resume_type)
+5.  make_splits.py         →  ml/data/splits/{train,val}_pool_{jobs,resumes}.jsonl
+```
+
+All data files are gitignored (`data/` pattern matches at any depth). Model files in `ml/models/` are also gitignored.
