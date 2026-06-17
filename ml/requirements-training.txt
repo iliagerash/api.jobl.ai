@@ -1,0 +1,25 @@
+# A100 GPU training environment — Phase 1-4 (Days 1-10)
+# Requires CUDA 12.x and Python 3.11+
+#
+# Install: pip install -r ml/requirements-training.txt
+
+# Teacher model serving (Day 1-2)
+vllm>=0.6.0
+
+# Fine-tuning (Days 3-8)
+sentence-transformers>=3.0.0
+transformers>=4.44.0
+peft>=0.12.0
+trl>=0.9.0
+datasets>=2.20.0
+
+# Export & quantization (Days 8-10)
+onnxruntime>=1.18.0
+llama-cpp-python>=0.2.80
+
+# Shared
+torch>=2.4.0
+huggingface-hub>=0.23.0
+accelerate>=0.33.0
+bitsandbytes>=0.43.0
+scipy>=1.13.0

@@ -937,6 +937,58 @@ Validates each response against the schema: all 18 required fields present, enum
 
 **Gate:** all samples produce valid extractions (script prints GATE PASSED/FAILED). Once passed, the `SYSTEM_PROMPT` constant in this file is the locked prompt template for Phase 1's `teacher_extract.py`.
 
+### Step 7 — Download Base Model Weights
+
+Downloads all four base models from HuggingFace into `ml/models/base/` and verifies each loads correctly. Run on the CPU server before the A100 rental starts so Day 1 isn't spent downloading ~50GB over the GPU instance's network.
+
+| Model | HuggingFace repo | Size | Purpose |
+|---|---|---|---|
+| Harrier-OSS-v1-0.6B | `microsoft/harrier-oss-v1-0.6b` | ~1.2 GB | Bi-encoder base |
+| XLM-RoBERTa-large | `FacebookAI/xlm-roberta-large` | ~2.2 GB | Reranker base |
+| Qwen2.5-7B-Instruct | `Qwen/Qwen2.5-7B-Instruct` | ~15 GB | Extractor base (LoRA) |
+| Qwen2.5-72B-Instruct-AWQ | `Qwen/Qwen2.5-72B-Instruct-AWQ` | ~41 GB | Teacher model (Day 1-2) |
+
+```bash
+pip install -e ".[ml]"
+hf auth login                                           # enter HuggingFace token
+
+python -u ml/scripts/download_models.py                 # all four models
+python -u ml/scripts/download_models.py --skip-teacher  # skip the 41GB teacher
+python -u ml/scripts/download_models.py --model harrier # single model
+python -u ml/scripts/download_models.py --verify-only   # check existing downloads
+```
+
+**Gate:** all models download and verify (tokenizer loads, config parses, embedding model produces vectors). Script prints GATE PASSED/FAILED.
+
+### Step 8 — A100 Training Environment
+
+The A100 GPU instance needs additional Python packages beyond the CPU server's `.[ml]` extras — specifically `vllm` (for serving the 72B teacher), `peft`/`trl` (for LoRA fine-tuning), and `datasets`. These have CUDA-specific build requirements that should be tested before the GPU clock starts.
+
+A pinned requirements file is provided at `ml/requirements-training.txt`. On the A100 instance:
+
+```bash
+# Create a fresh environment on the A100
+python3 -m venv .venv-training
+source .venv-training/bin/activate
+
+# Install training dependencies (requires CUDA 12.x)
+pip install -r ml/requirements-training.txt
+
+# Smoke-test: confirm vLLM can see the GPU
+python -c "import vllm; print('vLLM OK')"
+python -c "import torch; print(f'CUDA: {torch.cuda.is_available()}, devices: {torch.cuda.device_count()}')"
+python -c "from peft import LoraConfig; print('PEFT OK')"
+python -c "from trl import SFTTrainer; print('TRL OK')"
+```
+
+If testing on the CPU server (no GPU), install everything except `vllm` to confirm the Python dependencies resolve without conflicts:
+
+```bash
+pip install sentence-transformers>=3 transformers peft trl datasets onnxruntime
+```
+
+**Gate:** all imports succeed, `torch.cuda.is_available()` returns True on the A100.
+
 ### Pipeline Order
 
 Steps must run in this order since each reads the previous step's output:
@@ -949,6 +1001,8 @@ Steps must run in this order since each reads the previous step's output:
 4b. classify_resumes.py             →  updates interim/resumes.jsonl in place (adds resume_type)
 5.  make_splits.py                  →  ml/data/splits/{train,val}_pool_{jobs,resumes}.jsonl
 6.  validate_extraction_prompt.py   →  tests prompt via OpenAI API (no file output)
+7.  download_models.py              →  ml/models/base/{harrier,reranker,extractor,teacher}/
+8.  A100 environment setup          →  manual (see instructions above)
 ```
 
 All data files are gitignored (`data/` pattern matches at any depth). Model files in `ml/models/` are also gitignored.
