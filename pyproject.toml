@@ -35,6 +35,7 @@ scripts = [
 # peft, trl, vllm, onnxruntime, llama-cpp-python land here as each phase needs them).
 ml = [
   "datasketch>=1.6.5",
+  "spacy>=3.7.0",
 ]
 
 [build-system]
