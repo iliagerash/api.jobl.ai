@@ -7,7 +7,8 @@ required before proceeding.
 
 Detection layers (applied in order, with span deduplication):
   1. Regex — emails, URLs, phone numbers, street addresses  (high precision)
-  2. spaCy NER — PERSON entities via the multilingual xx_ent_wiki_sm model
+  2. spaCy NER — PERSON entities via language-specific models (en, es, pt)
+     with a validation filter to suppress common false positives
   3. Pattern-based — name-introduction phrases in top languages (ES/EN/PT/DE/FR)
 
 All detected spans are merged (overlapping spans consolidated) and replaced
@@ -15,7 +16,10 @@ with typed placeholders: [NAME], [EMAIL], [PHONE], [URL], [ADDRESS].
 
 Setup (one-time, on the server):
     pip install -e ".[ml]"
-    python -m spacy download xx_ent_wiki_sm
+    python -m spacy download en_core_web_sm
+    python -m spacy download es_core_news_sm
+    python -m spacy download pt_core_news_sm
+    python -m spacy download fr_core_news_sm
 
 Usage:
     python -u ml/scripts/pii_scrub.py
@@ -59,11 +63,20 @@ INTL_PHONE_RE = re.compile(
 # Phone: preceded by a keyword (Tel, Mobil, Celular, Téléphone, etc.)
 PHONE_CONTEXT_RE = re.compile(
     r"(?:Tel(?:[eé]fon[eo]?)?|Phone|Mobil(?:e)?|Handy|Fax|Cell"
-    r"|T[eé]l[eé]?(?:phone)?|Celular|Τηλ(?:έφωνο)?|Телефон)"
+    r"|T[eé]l[eé]?(?:phone)?|Celular|Τηλ(?:έφωνο)?|Телефон"
+    r"|Contact|Phone\s*number)"
     r"\s*[:\.\-]?\s*"
-    r"([\+\d\(][\d\s\-\./\(\)]{6,20}\d)",
+    r"([\+\d\(\[][\d\s\-\./\(\)\[\]]{6,20}\d[\]\)]?)",
     re.IGNORECASE,
 )
+
+# Phone: Australian mobile (04XX) — always a phone number regardless of context
+AU_MOBILE_RE = re.compile(r"\b04\d{2}[\s\-\.]?\d{3}[\s\-\.]?\d{3}\b")
+
+# Phone: bare domestic with separators (0XXX XXX XXXX) — 8+ digits starting with 0
+BARE_DOMESTIC_PHONE_RE = re.compile(r"\b0\d{1,3}[\s\-\.]\d{3,4}[\s\-\.]\d{3,5}\b")
+
+# ── Address patterns ───────────────────────────────────────────────────────
 
 # German street address: "Musterstraße 12" / "Am Markt 5a"
 STREET_DE_RE = re.compile(
@@ -72,9 +85,34 @@ STREET_DE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# English/AU street address: "123 Main Street" / "5a Baker Rd" / "42 Smith Ave"
+STREET_EN_RE = re.compile(
+    r"\b\d+[a-z]?\s+"
+    r"[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s+"
+    r"(?:Street|St|Road|Rd|Avenue|Ave|Drive|Dr|Boulevard|Blvd"
+    r"|Lane|Ln|Place|Pl|Crescent|Cres|Circuit|Cct|Court|Ct"
+    r"|Close|Cl|Loop|Way|Parade|Pde|Terrace|Tce|TCE)\b\.?",
+    re.IGNORECASE,
+)
+
+# AU/general: suburb + state abbreviation + postcode (e.g. "Taringa QLD 4068")
+AU_SUBURB_STATE_POST_RE = re.compile(
+    r"\b[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?\s+"
+    r"(?:NSW|VIC|QLD|SA|WA|TAS|NT|ACT)\s*,?\s*"
+    r"\d{4}\b"
+)
+
 # Postal code + city (DE: 5 digits, ES: 5 digits, PT: 4-4 or 4 digits, FR: 5 digits)
 POSTAL_CITY_RE = re.compile(
-    r"\b\d{4,5}[\s\-]?\d{0,3}\s+[A-ZÄÖÜÁÉÍÓÚÀÈÌÒÙÂÊÎÔÛÃÕÑÇ][a-zäöüßáéíóúàèìòùâêîôûãõñç]+\b"
+    r"\b\d{4,5}[\s\-]?\d{0,3}\s+[A-ZÄÖÜÁÉÍÓÚÀÈÌÒÙÂÊÎÔÛÃÕÑÇ][a-zäöüßáéíóúàèìòùâêîôûãõñç]{2,}\b"
+)
+
+# Address preceded by context keyword
+ADDRESS_LABEL_RE = re.compile(
+    r"(?:Address|Adresse|Anschrift|Direc(?:ción|tion)|Endereço|Location)"
+    r"\s*[:\.\-]\s*"
+    r"(.+?)(?:\n|$)",
+    re.IGNORECASE,
 )
 
 # ── Name-introduction patterns (top languages) ──────────────────────────────
@@ -86,26 +124,22 @@ NAME_INTRO_RE = re.compile(
     # Spanish
     r"[Mm]i nombre (?:es|completo es)"
     r"|[Mm]e llamo"
-    r"|[Ss]oy\s"
     # English
     r"|[Mm]y name is"
-    r"|I am\s"
     # Portuguese
     r"|[Mm]eu nome [eé]"
     r"|[Mm]e chamo"
     # German
     r"|[Mm]ein Name ist"
     r"|[Ii]ch hei[sß]e"
-    r"|[Ii]ch bin\s"
     # French
     r"|[Jj]e m['']appelle"
-    r"|[Jj]e suis\s"
     r")\s*"
     rf"({_NAME_CHUNK}(?:\s+{_NAME_CHUNK}){{1,4}})",
     re.UNICODE,
 )
 
-# "Vor- und Zuname:", "Nombre:", "Nome:", "Name:", "Nombre completo:" etc.
+# "Vor- und Zuname:", "Nombre:", "Nome:", "Name:", "Full name:" etc.
 NAME_LABEL_RE = re.compile(
     r"(?:Vor-?\s*(?:und|&)\s*(?:Zu|Nach)name|(?:Nombre|Nome)\s*(?:completo)?|Full\s*name|Name)"
     r"\s*[:\.\-]\s*"
@@ -115,11 +149,63 @@ NAME_LABEL_RE = re.compile(
 
 # Salutations: Herr/Frau, Sr./Sra., Mr./Mrs./Ms.
 SALUTATION_RE = re.compile(
-    r"(?:Herr|Frau|[Ss]r\.?a?|[Dd]on|[Dd]oña|Mr\.?|Mrs\.?|Ms\.?|M\.?|Mme\.?)"
+    r"(?:Herr|Frau|[Ss]r\.?a?|[Dd]on|[Dd]oña|Mr\.?|Mrs\.?|Ms\.?|Mme\.?)"
     r"\s+"
     rf"({_NAME_CHUNK}(?:\s+{_NAME_CHUNK}){{1,3}})",
     re.UNICODE,
 )
+
+# ── NER false-positive filter ──────────────────────────────────────────────
+
+# Common words the multilingual/small NER models wrongly tag as PERSON.
+# Built from actual false positives in the 200-sample gate review.
+_NER_BLOCKLIST = frozenset(w.lower() for w in [
+    # Job titles / roles
+    "Sales", "Customer", "Cook", "Cleaner", "Cleaning", "Supervisor",
+    "Process", "Worker", "Cashiering", "Sanitizing", "Catering",
+    "Porter", "Nurse", "Carer", "Barring", "Agile", "Scrum",
+    "Tableau", "Genesys", "Remedy", "Sutherland", "Analytics",
+    "Respiratory", "Allied", "Cert", "Strong", "Complementary",
+    "Adaptable", "Flexible", "Enthusiastic", "Motivated", "Resume",
+    "Profile", "Curriculum", "Vitae", "Gaming", "Retail", "Data",
+    "Analyst", "Designer", "Assistant", "Attendant", "Electrician",
+    "Store", "Unit", "Manager", "Garment", "Senior", "Junior",
+    "Individual", "Support", "Health", "Drug", "Covid",
+    # Common sentence starters / adjectives NER misreads
+    "Dear", "Hi", "Hello", "Thank", "Good", "Please",
+    "Seeking", "Looking", "Experienced", "Dedicated", "Passionate",
+    "Reliable", "Hardworking", "Quick", "Fast", "Professional",
+    # Tools / brands wrongly tagged
+    "Winyama", "Clough", "Moxy", "Excavator", "Loader",
+    "Hobart", "Altman", "Solon", "Bhatbhatni",
+    # Generic words
+    "Fluids", "Certificates", "Resident", "Engineer",
+])
+
+
+def _is_plausible_name(text: str) -> bool:
+    """Filter NER PERSON entities to reduce false positives.
+
+    Accepts an entity only if it:
+      - Has 2+ words (single common words are almost always false positives), OR
+      - Is a single word not in the blocklist AND is title-cased (not all-lower, not all-upper)
+      - Is not entirely numeric or a single character
+    """
+    stripped = text.strip()
+    if len(stripped) <= 1:
+        return False
+    words = stripped.split()
+    if len(words) == 1:
+        word = words[0]
+        if word.lower() in _NER_BLOCKLIST:
+            return False
+        if not (word[0].isupper() and not word.isupper()):
+            return False
+        return True
+    # Multi-word: check if any word is blocklisted
+    if any(w.lower() in _NER_BLOCKLIST for w in words):
+        return False
+    return True
 
 
 # ── Span utilities ──────────────────────────────────────────────────────────
@@ -149,28 +235,55 @@ def _replace_spans(text: str, spans: list[tuple[int, int, str]]) -> str:
 
 # ── Scrubber ────────────────────────────────────────────────────────────────
 
+# Map resume language_code → spaCy model name
+_LANG_TO_MODEL = {
+    "en": "en_core_web_sm",
+    "es": "es_core_news_sm",
+    "pt": "pt_core_news_sm",
+    "de": "de_core_news_sm",
+    "fr": "fr_core_news_sm",
+}
+
+
 class PiiScrubber:
     def __init__(self) -> None:
-        self._nlp = None
+        self._models: dict[str, object] = {}
+        self._failed: set[str] = set()
         try:
-            import spacy
-            self._nlp = spacy.load("xx_ent_wiki_sm")
-            # Raise max doc length for long resumes (default 1M chars is fine)
-            self._nlp.max_length = 2_000_000
-            print("Loaded spaCy model: xx_ent_wiki_sm (multilingual NER for PERSON entities)")
-        except OSError:
-            print(
-                "WARNING: spaCy model 'xx_ent_wiki_sm' not found — falling back to "
-                "regex-only (no NER-based name detection). Install with:\n"
-                "  python -m spacy download xx_ent_wiki_sm"
-            )
+            import spacy  # noqa: F401
+            self._spacy = spacy
         except ImportError:
             print(
                 "WARNING: spaCy not installed — falling back to regex-only. Install with:\n"
-                "  pip install -e '.[ml]' && python -m spacy download xx_ent_wiki_sm"
+                "  pip install -e '.[ml]'"
             )
+            self._spacy = None
 
-    def scrub(self, text: str | None) -> tuple[str, dict[str, int]]:
+    def _get_nlp(self, language_code: str | None):
+        if self._spacy is None:
+            return None
+        code = (language_code or "").strip().lower()
+        model_name = _LANG_TO_MODEL.get(code)
+        if model_name is None:
+            return None
+        if model_name in self._failed:
+            return None
+        if model_name not in self._models:
+            try:
+                nlp = self._spacy.load(model_name)
+                nlp.max_length = 2_000_000
+                self._models[model_name] = nlp
+                print(f"  Loaded spaCy model: {model_name}")
+            except OSError:
+                print(
+                    f"  WARNING: spaCy model '{model_name}' not found — "
+                    f"no NER for lang={code}. Install with: python -m spacy download {model_name}"
+                )
+                self._failed.add(model_name)
+                return None
+        return self._models[model_name]
+
+    def scrub(self, text: str | None, language_code: str | None = None) -> tuple[str, dict[str, int]]:
         if not text:
             return text or "", {}
 
@@ -181,7 +294,7 @@ class PiiScrubber:
             spans.append((start, end, pii_type))
             stats[pii_type] = stats.get(pii_type, 0) + 1
 
-        # Layer 1: regex — structured PII
+        # Layer 1: regex — structured PII (high precision)
         for m in EMAIL_RE.finditer(text):
             _add(m.start(), m.end(), "EMAIL")
 
@@ -194,17 +307,33 @@ class PiiScrubber:
         for m in PHONE_CONTEXT_RE.finditer(text):
             _add(m.start(1), m.end(1), "PHONE")
 
+        for m in AU_MOBILE_RE.finditer(text):
+            _add(m.start(), m.end(), "PHONE")
+
+        for m in BARE_DOMESTIC_PHONE_RE.finditer(text):
+            _add(m.start(), m.end(), "PHONE")
+
         for m in STREET_DE_RE.finditer(text):
+            _add(m.start(), m.end(), "ADDRESS")
+
+        for m in STREET_EN_RE.finditer(text):
+            _add(m.start(), m.end(), "ADDRESS")
+
+        for m in AU_SUBURB_STATE_POST_RE.finditer(text):
             _add(m.start(), m.end(), "ADDRESS")
 
         for m in POSTAL_CITY_RE.finditer(text):
             _add(m.start(), m.end(), "ADDRESS")
 
-        # Layer 2: spaCy NER — PERSON entities
-        if self._nlp is not None:
-            doc = self._nlp(text)
+        for m in ADDRESS_LABEL_RE.finditer(text):
+            _add(m.start(1), m.end(1), "ADDRESS")
+
+        # Layer 2: spaCy NER — PERSON entities (language-routed, filtered)
+        nlp = self._get_nlp(language_code)
+        if nlp is not None:
+            doc = nlp(text)
             for ent in doc.ents:
-                if ent.label_ == "PER":
+                if ent.label_ in ("PER", "PERSON") and _is_plausible_name(ent.text):
                     _add(ent.start_char, ent.end_char, "NAME")
 
         # Layer 3: pattern-based name detection (catches names NER may miss)
@@ -270,11 +399,12 @@ def main() -> None:
     print(f"Scrubbing resumes from {args.input} ...")
     with open(output_path, "w", encoding="utf-8") as out:
         for record in iter_jsonl(args.input):
+            lang = record.get("language_code")
             original_desc = record.get("description") or ""
             original_title = record.get("title") or ""
 
-            scrubbed_desc, desc_stats = scrubber.scrub(original_desc)
-            scrubbed_title, title_stats = scrubber.scrub(original_title)
+            scrubbed_desc, desc_stats = scrubber.scrub(original_desc, lang)
+            scrubbed_title, title_stats = scrubber.scrub(original_title, lang)
 
             combined_stats: dict[str, int] = {}
             for d in (desc_stats, title_stats):
@@ -294,7 +424,7 @@ def main() -> None:
             if writing_sample:
                 sample_pairs.append({
                     "id": record.get("id"),
-                    "language_code": record.get("language_code"),
+                    "language_code": lang,
                     "title_before": original_title,
                     "title_after": scrubbed_title,
                     "desc_before": original_desc[:500],
