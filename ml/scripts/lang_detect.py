@@ -66,6 +66,23 @@ def _json_default(v):
     raise TypeError(type(v).__name__)
 
 
+def _predict(model, text: str) -> tuple[str, float]:
+    """Wrapper around fasttext predict that handles NumPy 2.x incompatibility."""
+    clean = text.replace("\n", " ")
+    try:
+        labels, scores = model.predict(clean, k=1)
+    except ValueError:
+        # fasttext uses np.array(..., copy=False) which fails on NumPy 2.x
+        import numpy as np
+        _original = np.array
+        np.array = lambda *a, copy=None, **kw: _original(*a, **kw)
+        try:
+            labels, scores = model.predict(clean, k=1)
+        finally:
+            np.array = _original
+    return labels[0].replace("__label__", ""), float(scores[0])
+
+
 def process_file(model, input_path: str) -> dict:
     """Add language_fasttext + language_confidence to each record, in place."""
     tmp_path = input_path + ".tmp"
@@ -82,10 +99,7 @@ def process_file(model, input_path: str) -> dict:
                 lang = "unknown"
                 confidence = 0.0
             else:
-                # fastText predict returns (labels, scores) — single prediction
-                labels, scores = model.predict(text.replace("\n", " "), k=1)
-                lang = labels[0].replace("__label__", "")
-                confidence = float(scores[0])
+                lang, confidence = _predict(model, text)
 
             record["language_fasttext"] = lang
             record["language_confidence"] = round(confidence, 4)
