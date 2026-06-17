@@ -989,6 +989,31 @@ pip install sentence-transformers>=3 transformers peft trl datasets onnxruntime
 
 **Gate:** all imports succeed, `torch.cuda.is_available()` returns True on the A100.
 
+### Step 9 — Artifact Push Script
+
+Pushes ML pipeline artifacts to remote storage via `scp` after each training phase on the A100. Designed for incremental backup — run after each phase so instance death mid-window loses at most one day of work.
+
+```bash
+# Configure (add to .bashrc or export before use)
+export PUSH_REMOTE_HOST=webadmin@your-server.com
+export PUSH_REMOTE_BASE=/home/webadmin/Jobl/ml-artifacts
+
+# Dry-run to verify paths and SSH connectivity
+./ml/scripts/push_artifacts.sh teacher_labels --dry-run
+
+# Push after each phase
+./ml/scripts/push_artifacts.sh teacher_labels    # after Day 1-2
+./ml/scripts/push_artifacts.sh biencoder         # after Day 3-4
+./ml/scripts/push_artifacts.sh reranker          # after Day 5-6
+./ml/scripts/push_artifacts.sh extractor         # after Day 7-8
+./ml/scripts/push_artifacts.sh corpus_outputs    # after Day 9
+./ml/scripts/push_artifacts.sh final             # Day 10: push everything
+```
+
+Requires SSH key auth to the remote host. Each phase creates the remote directory structure and transfers the relevant files. The `final` phase pushes all models, data, splits, configs, and scripts.
+
+**Gate:** dry-run completes without SSH errors; verify at least one test file is accessible on the remote host.
+
 ### Pipeline Order
 
 Steps must run in this order since each reads the previous step's output:
@@ -1003,6 +1028,7 @@ Steps must run in this order since each reads the previous step's output:
 6.  validate_extraction_prompt.py   →  tests prompt via OpenAI API (no file output)
 7.  download_models.py              →  ml/models/base/{harrier,reranker,extractor,teacher}/
 8.  A100 environment setup          →  manual (see instructions above)
+9.  push_artifacts.sh <phase>       →  scp artifacts to remote storage after each training phase
 ```
 
 All data files are gitignored (`data/` pattern matches at any depth). Model files in `ml/models/` are also gitignored.
