@@ -228,13 +228,16 @@ def main() -> None:
 
     client = OpenAI(api_key=api_key, timeout=60)
 
-    # Sample records — read all, pick random subset for diverse coverage
-    print(f"Loading samples from {args.input} ...")
-    all_records = list(iter_jsonl(args.input))
-    if len(all_records) > args.limit:
-        samples = random.sample(all_records, args.limit)
-    else:
-        samples = all_records
+    # Reservoir sampling — picks limit random records without loading the full file
+    print(f"Sampling {args.limit} records from {args.input} ...")
+    samples: list[dict] = []
+    for i, record in enumerate(iter_jsonl(args.input)):
+        if i < args.limit:
+            samples.append(record)
+        else:
+            j = random.randint(0, i)
+            if j < args.limit:
+                samples[j] = record
     print(f"Testing {len(samples)} samples with model={args.model}")
 
     total = 0
