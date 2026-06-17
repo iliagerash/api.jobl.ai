@@ -4,13 +4,9 @@ make_splits.py
 Phase 0, step 5: split the interim job and resume corpora into train/val pools
 by time (not random), stratified to ensure the val set covers ≥15 countries.
 
-Time-based splitting prevents template-pattern leakage: the val pool contains
-the most recent records, and the train pool contains older ones — mimicking
-how the production system would encounter new data after training.
-
-The val pools are where Phase 1's teacher labeling will draw validation pairs
-from; the actual (resume, job, score) triples are constructed during teacher
-labeling, not here.
+Uses a two-pass streaming approach to avoid loading the full corpus into memory:
+  Pass 1: scan all timestamps to find the percentile cutoff date
+  Pass 2: stream records into train or val output files based on the cutoff
 
 Usage:
     python -u ml/scripts/make_splits.py
@@ -33,8 +29,6 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspa
 
 HEARTBEAT_EVERY = 100_000
 
-# Records without a parseable published_at get this sentinel (very old) so
-# they land in the train pool, not val.
 _EPOCH = datetime(2000, 1, 1, tzinfo=timezone.utc)
 
 
@@ -65,86 +59,146 @@ def _json_default(v):
     raise TypeError(type(v).__name__)
 
 
-def _write_jsonl(path: str, records: list[dict]) -> None:
-    with open(path, "w", encoding="utf-8") as f:
-        for record in records:
-            f.write(json.dumps(record, default=_json_default, ensure_ascii=False))
-            f.write("\n")
+def pass1_find_cutoff(input_path: str, val_fraction: float) -> tuple[datetime, int]:
+    """Scan all timestamps, sort just the timestamps (not full records), find cutoff."""
+    print(f"  Pass 1: scanning timestamps in {input_path} ...")
+    timestamps: list[datetime] = []
+    count = 0
+    for record in iter_jsonl(input_path):
+        timestamps.append(_parse_dt(record.get("published_at")))
+        count += 1
+        if count % HEARTBEAT_EVERY == 0:
+            print(f"    ... {count:,} records scanned")
+
+    print(f"    {count:,} records total")
+    timestamps.sort()
+
+    split_idx = int(count * (1 - val_fraction))
+    cutoff = timestamps[split_idx] if split_idx < count else timestamps[-1]
+    print(f"    Cutoff date: {cutoff.isoformat()} (record {split_idx:,} of {count:,})")
+    return cutoff, count
 
 
-def split_by_time(
+def pass2_split(
     input_path: str,
-    val_fraction: float,
+    train_path: str,
+    val_path: str,
+    cutoff: datetime,
     min_countries: int,
-    label: str,
-) -> tuple[list[dict], list[dict], dict]:
-    """Load, sort by published_at, split into train/val pools.
+) -> dict:
+    """Stream records into train/val files based on cutoff date."""
+    print(f"  Pass 2: splitting records ...")
+    train_count = 0
+    val_count = 0
+    val_countries: dict[str, int] = {}
+    count = 0
 
-    If the initial time-based val set has fewer than min_countries distinct
-    country codes, augment it by pulling the most recent records from
-    underrepresented countries in the train set.
+    with open(train_path, "w", encoding="utf-8") as train_f, \
+         open(val_path, "w", encoding="utf-8") as val_f:
+        for record in iter_jsonl(input_path):
+            dt = _parse_dt(record.get("published_at"))
+            if dt > cutoff:
+                val_f.write(json.dumps(record, default=_json_default, ensure_ascii=False))
+                val_f.write("\n")
+                val_count += 1
+                cc = record.get("country_code") or "NULL"
+                val_countries[cc] = val_countries.get(cc, 0) + 1
+            else:
+                train_f.write(json.dumps(record, default=_json_default, ensure_ascii=False))
+                train_f.write("\n")
+                train_count += 1
+
+            count += 1
+            if count % HEARTBEAT_EVERY == 0:
+                print(f"    ... {count:,} records processed")
+
+    print(f"    {train_count:,} train / {val_count:,} val")
+
+    # Check if we need to augment val with underrepresented countries.
+    # If val already has enough countries, skip the expensive augmentation.
+    distinct_countries = len([c for c in val_countries if c != "NULL"])
+    if distinct_countries < min_countries:
+        print(f"    Val covers {distinct_countries} countries, need {min_countries} — augmenting ...")
+        _augment_countries(train_path, val_path, val_countries, min_countries)
+
+    return {
+        "train_count": train_count,
+        "val_count": val_count,
+        "val_countries": val_countries,
+    }
+
+
+def _augment_countries(
+    train_path: str,
+    val_path: str,
+    val_countries: dict[str, int],
+    min_countries: int,
+) -> None:
+    """Move recent records from underrepresented countries into the val set.
+
+    Reads the train file to find countries missing from val, collects up to 50
+    records per missing country (from the end of the file = most recent), then
+    rewrites the train file without those records and appends them to val.
     """
-    print(f"  Loading {input_path} ...")
-    records = list(iter_jsonl(input_path))
-    total = len(records)
-    print(f"  {total:,} records loaded")
+    existing_val_countries = set(val_countries.keys()) - {"NULL"}
 
-    # Sort by published_at ascending (oldest first)
-    records.sort(key=lambda r: _parse_dt(r.get("published_at")))
+    # Find all countries in train
+    train_countries: set[str] = set()
+    for record in iter_jsonl(train_path):
+        cc = record.get("country_code")
+        if cc:
+            train_countries.add(cc)
 
-    # Split at the time boundary
-    split_idx = int(total * (1 - val_fraction))
-    train = records[:split_idx]
-    val = records[split_idx:]
+    missing = train_countries - existing_val_countries
+    if not missing:
+        return
 
-    print(f"  Time split: {len(train):,} train / {len(val):,} val (cutoff at record {split_idx:,})")
-    if train:
-        cutoff_date = _parse_dt(train[-1].get("published_at"))
-        print(f"  Train ends at: {cutoff_date.isoformat()}")
-    if val:
-        val_start = _parse_dt(val[0].get("published_at"))
-        print(f"  Val starts at: {val_start.isoformat()}")
+    # Collect IDs to move (up to 50 per missing country)
+    ids_to_move: set = set()
+    country_collected: dict[str, int] = {}
+    # Read train in reverse order (most recent first) — but since we can't
+    # efficiently reverse a file, just scan forward and keep the LAST 50 per country
+    country_records: dict[str, list[int]] = {c: [] for c in missing}
+    for record in iter_jsonl(train_path):
+        cc = record.get("country_code")
+        if cc in country_records:
+            country_records[cc].append(record.get("id"))
 
-    # Check country coverage in val set
-    val_countries = set(r.get("country_code") for r in val if r.get("country_code"))
-    print(f"  Val set covers {len(val_countries)} countries")
+    for cc in sorted(missing):
+        # Take the last 50 (most recent since file is roughly time-ordered after pass2)
+        to_move = country_records[cc][-50:]
+        ids_to_move.update(to_move)
+        val_countries[cc] = val_countries.get(cc, 0) + len(to_move)
+        if len([c for c in val_countries if c != "NULL"]) >= min_countries:
+            break
 
-    if len(val_countries) < min_countries:
-        # Find countries missing from val but present in train
-        train_countries = set(r.get("country_code") for r in train if r.get("country_code"))
-        missing = train_countries - val_countries
-        print(f"  Augmenting val set with records from {len(missing)} underrepresented countries ...")
+    # Rewrite train (excluding moved records) and append to val
+    tmp_train = train_path + ".tmp"
+    moved = 0
+    with open(tmp_train, "w", encoding="utf-8") as train_f, \
+         open(val_path, "a", encoding="utf-8") as val_f:
+        for record in iter_jsonl(train_path):
+            if record.get("id") in ids_to_move:
+                val_f.write(json.dumps(record, default=_json_default, ensure_ascii=False))
+                val_f.write("\n")
+                moved += 1
+            else:
+                train_f.write(json.dumps(record, default=_json_default, ensure_ascii=False))
+                train_f.write("\n")
 
-        # For each missing country, move the most recent records (from the end
-        # of train, since it's sorted by time) into val
-        augmented = 0
-        for country in sorted(missing):
-            # Find up to 50 most-recent records for this country in train
-            country_records = [r for r in reversed(train) if r.get("country_code") == country][:50]
-            for r in country_records:
-                train.remove(r)
-                val.append(r)
-                augmented += 1
-            val_countries.add(country)
-            if len(val_countries) >= min_countries:
-                break
-
-        print(f"  Augmented {augmented} records; val now covers {len(val_countries)} countries")
-
-    # Compute per-country stats for val
-    country_counts: dict[str, int] = {}
-    for r in val:
-        cc = r.get("country_code") or "NULL"
-        country_counts[cc] = country_counts.get(cc, 0) + 1
-
-    return train, val, country_counts
+    os.replace(tmp_train, train_path)
+    distinct = len([c for c in val_countries if c != "NULL"])
+    print(f"    Augmented {moved} records from {len(ids_to_move)} IDs; val now covers {distinct} countries")
 
 
 def print_country_stats(label: str, country_counts: dict[str, int]) -> None:
     sorted_countries = sorted(country_counts.items(), key=lambda x: -x[1])
     print(f"  {label} val set — {len(sorted_countries)} countries:")
-    for cc, count in sorted_countries:
+    for cc, count in sorted_countries[:30]:
         print(f"    {cc:>5}: {count:>8,}")
+    if len(sorted_countries) > 30:
+        others = sum(c for _, c in sorted_countries[30:])
+        print(f"    other: {others:>8,}")
 
 
 def main() -> None:
@@ -162,17 +216,18 @@ def main() -> None:
 
     if os.path.exists(jobs_path):
         print("Splitting jobs ...")
-        train_jobs, val_jobs, job_country_counts = split_by_time(
-            jobs_path, args.val_fraction, args.min_countries, "jobs"
+        cutoff, total = pass1_find_cutoff(jobs_path, args.val_fraction)
+        stats = pass2_split(
+            jobs_path,
+            os.path.join(args.output_dir, "train_pool_jobs.jsonl"),
+            os.path.join(args.output_dir, "val_pool_jobs.jsonl"),
+            cutoff,
+            args.min_countries,
         )
-        _write_jsonl(os.path.join(args.output_dir, "train_pool_jobs.jsonl"), train_jobs)
-        _write_jsonl(os.path.join(args.output_dir, "val_pool_jobs.jsonl"), val_jobs)
-        print(f"  Wrote {len(train_jobs):,} train + {len(val_jobs):,} val jobs")
-        print_country_stats("Jobs", job_country_counts)
-        # Gate check
-        n_countries = len([c for c in job_country_counts if c != "NULL"])
+        print_country_stats("Jobs", stats["val_countries"])
+        n_countries = len([c for c in stats["val_countries"] if c != "NULL"])
         if n_countries >= args.min_countries:
-            print(f"  GATE PASSED: {n_countries} countries ≥ {args.min_countries}")
+            print(f"  GATE PASSED: {n_countries} countries >= {args.min_countries}")
         else:
             print(f"  GATE FAILED: {n_countries} countries < {args.min_countries} — review data coverage")
     else:
@@ -180,16 +235,18 @@ def main() -> None:
 
     if os.path.exists(resumes_path):
         print("\nSplitting resumes ...")
-        train_resumes, val_resumes, resume_country_counts = split_by_time(
-            resumes_path, args.val_fraction, args.min_countries, "resumes"
+        cutoff, total = pass1_find_cutoff(resumes_path, args.val_fraction)
+        stats = pass2_split(
+            resumes_path,
+            os.path.join(args.output_dir, "train_pool_resumes.jsonl"),
+            os.path.join(args.output_dir, "val_pool_resumes.jsonl"),
+            cutoff,
+            args.min_countries,
         )
-        _write_jsonl(os.path.join(args.output_dir, "train_pool_resumes.jsonl"), train_resumes)
-        _write_jsonl(os.path.join(args.output_dir, "val_pool_resumes.jsonl"), val_resumes)
-        print(f"  Wrote {len(train_resumes):,} train + {len(val_resumes):,} val resumes")
-        print_country_stats("Resumes", resume_country_counts)
-        n_countries = len([c for c in resume_country_counts if c != "NULL"])
+        print_country_stats("Resumes", stats["val_countries"])
+        n_countries = len([c for c in stats["val_countries"] if c != "NULL"])
         if n_countries >= args.min_countries:
-            print(f"  GATE PASSED: {n_countries} countries ≥ {args.min_countries}")
+            print(f"  GATE PASSED: {n_countries} countries >= {args.min_countries}")
         else:
             print(f"  GATE FAILED: {n_countries} countries < {args.min_countries} — review data coverage")
     else:
