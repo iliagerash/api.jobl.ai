@@ -263,7 +263,6 @@ def main() -> None:
                     {"role": "user", "content": user_msg},
                 ],
                 text={"format": {"type": "json_object"}},
-                temperature=0.0,
             )
             content = resp.output_text or ""
 
