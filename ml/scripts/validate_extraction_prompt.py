@@ -256,17 +256,16 @@ def main() -> None:
             print(f"  USER: {user_msg[:200]}...")
 
         try:
-            resp = client.chat.completions.create(
+            resp = client.responses.create(
                 model=args.model,
-                messages=[
+                input=[
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": user_msg},
                 ],
-                response_format={"type": "json_object"},
+                text={"format": {"type": "json_object"}},
                 temperature=0.0,
-                max_tokens=1000,
             )
-            content = resp.choices[0].message.content or ""
+            content = resp.output_text or ""
 
             if args.debug:
                 print(f"  RESPONSE: {content[:500]}")
