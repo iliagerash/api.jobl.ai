@@ -485,7 +485,8 @@ def main() -> None:
                 })
 
             total += 1
-            if total % HEARTBEAT_EVERY == 0:
+            heartbeat = 100 if (limit and limit <= 1000) else HEARTBEAT_EVERY
+            if total % heartbeat == 0:
                 print(f"  ... {total:,} resumes processed, {rows_with_pii:,} had PII")
             if limit and total >= limit:
                 break
