@@ -36,6 +36,7 @@ scripts = [
 ml = [
   "datasketch>=1.6.5",
   "spacy>=3.7.0",
+  "fasttext-wheel>=0.9.2",
 ]
 
 [build-system]
