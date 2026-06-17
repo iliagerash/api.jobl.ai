@@ -16,7 +16,7 @@ Models:
 Setup:
     pip install -e ".[ml]"
     # If any model requires gated access:
-    huggingface-cli login
+    hf auth login
 
 Usage:
     python -u ml/scripts/download_models.py
