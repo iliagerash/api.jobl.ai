@@ -917,17 +917,38 @@ python -u ml/scripts/make_splits.py --val-fraction 0.15 --min-countries 20
 
 **Gate:** val set spans ≥15 distinct country codes (script prints GATE PASSED/FAILED explicitly).
 
+### Step 6 — Validate Extraction Prompt
+
+Tests the Component 3 (Extractor) prompt against ~20 sample job postings via the OpenAI API to confirm the output schema is valid before committing to it for Phase 1 teacher labeling on the A100.
+
+The prompt extracts 18 structured fields from raw job postings: `normalized_title` (English-normalized), `original_title`, `seniority`, `occupation_category` (from the existing 26 categories), `employment_type`, `contract_type`, `work_mode`, `location_city`, `location_country`, `language`, `salary_present/min/max/currency`, `skills` (English-normalized array), `experience_years_min`, `is_expired_signal`, `is_duplicate_signal`.
+
+All structured fields (title, skills) are normalized to English for cross-lingual matching consistency. Original titles are preserved in the `original_title` field.
+
+```bash
+pip install -e ".[ml]"                                          # adds openai
+export OPENAI_API_KEY="sk-..."
+python -u ml/scripts/validate_extraction_prompt.py
+python -u ml/scripts/validate_extraction_prompt.py --limit 30 --debug    # verbose
+python -u ml/scripts/validate_extraction_prompt.py --model gpt-4o        # different model
+```
+
+Validates each response against the schema: all 18 required fields present, enum values conform, `occupation_category` is one of the 26 valid categories, `location_country` is ISO 3166-1 alpha-2, `skills` is an array.
+
+**Gate:** all samples produce valid extractions (script prints GATE PASSED/FAILED). Once passed, the `SYSTEM_PROMPT` constant in this file is the locked prompt template for Phase 1's `teacher_extract.py`.
+
 ### Pipeline Order
 
 Steps must run in this order since each reads the previous step's output:
 
 ```
-1.  export_corpus.py       →  ml/data/raw/{jobs,resumes}.jsonl
-2.  dedup.py               →  ml/data/interim/jobs.jsonl
-3.  pii_scrub.py           →  ml/data/interim/resumes.jsonl
-4.  lang_detect.py         →  updates interim/{jobs,resumes}.jsonl in place
-4b. classify_resumes.py    →  updates interim/resumes.jsonl in place (adds resume_type)
-5.  make_splits.py         →  ml/data/splits/{train,val}_pool_{jobs,resumes}.jsonl
+1.  export_corpus.py                →  ml/data/raw/{jobs,resumes}.jsonl
+2.  dedup.py                        →  ml/data/interim/jobs.jsonl
+3.  pii_scrub.py                    →  ml/data/interim/resumes.jsonl
+4.  lang_detect.py                  →  updates interim/{jobs,resumes}.jsonl in place
+4b. classify_resumes.py             →  updates interim/resumes.jsonl in place (adds resume_type)
+5.  make_splits.py                  →  ml/data/splits/{train,val}_pool_{jobs,resumes}.jsonl
+6.  validate_extraction_prompt.py   →  tests prompt via OpenAI API (no file output)
 ```
 
 All data files are gitignored (`data/` pattern matches at any depth). Model files in `ml/models/` are also gitignored.
