@@ -63,11 +63,7 @@ fi
 echo "============================================================"
 
 echo ""
-echo "--- Data: interim (deduped jobs + PII-scrubbed resumes with lang + resume_type) ---"
-pull_dir "ml/data/interim" "ml/data/interim"
-
-echo ""
-echo "--- Data: splits (train/val pools) ---"
+echo "--- Data: splits (train/val pools — this is what the GPU scripts read from) ---"
 pull_dir "ml/data/splits" "ml/data/splits"
 
 echo ""
