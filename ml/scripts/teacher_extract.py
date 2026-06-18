@@ -42,7 +42,7 @@ from ml.scripts.validate_extraction_prompt import (
     REQUIRED_FIELDS,
 )
 
-HEARTBEAT_EVERY = 500
+HEARTBEAT_EVERY = 100
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 
 
@@ -156,6 +156,7 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=None, help="Max records to process")
     parser.add_argument("--workers", type=int, default=4, help="Concurrent request workers (default: 4)")
     parser.add_argument("--resume", action="store_true", help="Skip IDs already in the output file")
+    parser.add_argument("--stratified", action="store_true", help="Sample proportionally across countries and languages for diversity")
     args = parser.parse_args()
 
     os.makedirs(os.path.dirname(args.output), exist_ok=True)
@@ -171,13 +172,40 @@ def main() -> None:
 
     # Collect jobs to process
     print(f"Loading jobs from {args.input} ...")
-    jobs = []
-    for record in iter_jsonl(args.input):
-        if args.resume and record.get("id") in processed_ids:
-            continue
-        jobs.append(record)
-        if args.limit and len(jobs) >= args.limit:
-            break
+    if args.stratified and args.limit:
+        # Stratified sampling: group by country+language, sample proportionally
+        from collections import defaultdict
+        import random
+        buckets: dict[str, list[dict]] = defaultdict(list)
+        for record in iter_jsonl(args.input):
+            if args.resume and record.get("id") in processed_ids:
+                continue
+            cc = record.get("country_code") or "XX"
+            lang = record.get("language_fasttext") or record.get("language_code") or "xx"
+            buckets[f"{cc}:{lang}"].append(record)
+
+        total_available = sum(len(v) for v in buckets.values())
+        jobs = []
+        # Proportional sampling with a minimum of 10 per bucket to ensure coverage
+        for key, records in buckets.items():
+            proportion = len(records) / total_available
+            n_sample = max(10, int(args.limit * proportion))
+            n_sample = min(n_sample, len(records))
+            jobs.extend(random.sample(records, n_sample))
+
+        # Trim to exact limit and shuffle
+        if len(jobs) > args.limit:
+            jobs = random.sample(jobs, args.limit)
+        random.shuffle(jobs)
+        print(f"Stratified sampling: {len(buckets)} country:language buckets, {len(jobs):,} jobs selected")
+    else:
+        jobs = []
+        for record in iter_jsonl(args.input):
+            if args.resume and record.get("id") in processed_ids:
+                continue
+            jobs.append(record)
+            if args.limit and len(jobs) >= args.limit:
+                break
     print(f"Processing {len(jobs):,} jobs with {args.workers} workers")
 
     # Open output file in append mode for resumability
