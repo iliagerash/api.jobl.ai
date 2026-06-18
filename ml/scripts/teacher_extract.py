@@ -119,11 +119,14 @@ def extract_one(client, model: str, record: dict, max_retries: int = 3) -> dict 
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": user_msg},
                 ],
-                response_format={"type": "json_object"},
                 max_tokens=1000,
                 temperature=0.0,
             )
             content = resp.choices[0].message.content or ""
+            # Parse JSON from raw output (no constrained decoding)
+            content = content.strip()
+            if content.startswith("```"):
+                content = content.strip("`").replace("json\n", "", 1).strip()
             result = json.loads(content)
             errors = _validate_extraction(result)
             if errors:
@@ -134,7 +137,7 @@ def extract_one(client, model: str, record: dict, max_retries: int = 3) -> dict 
             return result
         except json.JSONDecodeError as e:
             if attempt >= max_retries:
-                return {"_error": f"invalid JSON: {e}"}
+                return {"_error": f"invalid JSON: {e}", "_raw": content[:500]}
             time.sleep(1)
         except Exception as e:
             if attempt >= max_retries:

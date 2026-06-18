@@ -179,16 +179,16 @@ def score_pair(client, model: str, resume: dict, job: dict, max_retries: int = 3
                     {"role": "system", "content": MATCH_SYSTEM_PROMPT},
                     {"role": "user", "content": user_msg},
                 ],
-                response_format={"type": "json_object"},
                 max_tokens=300,
                 temperature=0.0,
             )
-            content = resp.choices[0].message.content or ""
+            content = (resp.choices[0].message.content or "").strip()
+            if content.startswith("```"):
+                content = content.strip("`").replace("json\n", "", 1).strip()
             result = json.loads(content)
 
             score = result.get("score")
             if score not in (0.0, 0.3, 0.7, 1.0):
-                # Snap to nearest valid score
                 valid = [0.0, 0.3, 0.7, 1.0]
                 score = min(valid, key=lambda v: abs(v - float(score or 0)))
                 result["score"] = score
@@ -219,11 +219,12 @@ def generate_hard_negative(client, model: str, resume: dict, job: dict, max_retr
                     {"role": "system", "content": HARD_NEG_SYSTEM_PROMPT},
                     {"role": "user", "content": user_msg},
                 ],
-                response_format={"type": "json_object"},
                 max_tokens=500,
                 temperature=0.3,
             )
-            content = resp.choices[0].message.content or ""
+            content = (resp.choices[0].message.content or "").strip()
+            if content.startswith("```"):
+                content = content.strip("`").replace("json\n", "", 1).strip()
             return json.loads(content)
         except Exception as e:
             if attempt >= max_retries:

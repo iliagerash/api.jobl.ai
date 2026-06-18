@@ -1041,3 +1041,104 @@ Steps must run in this order since each reads the previous step's output:
 ```
 
 All data files are gitignored (`data/` pattern matches at any depth). Model files in `ml/models/` are also gitignored.
+
+---
+
+## ML Pipeline — Phase 1: Teacher Labeling (A100 GPU)
+
+Phase 1 runs on the rented A100 80GB SXM instance. The teacher model (Qwen2.5-72B-Instruct-AWQ) generates training labels for the three production models.
+
+### Step 1 — A100 Instance Setup
+
+See [BACKUP.md](../BACKUP.md) (in the workspace root, outside the repo) for the full boot sequence: venv restore, data pull, model download. Summary:
+
+```bash
+sudo apt install -y python3.12-venv python3.12-dev
+# restore venv, pull scripts, pull data, pull/download models — see BACKUP.md
+source /home/webadmin/.venv-training/bin/activate
+```
+
+### Step 2 — Launch Teacher Model
+
+Serve the 72B teacher via vLLM's OpenAI-compatible API. The AWQ 4-bit quantization fits in ~40GB VRAM, leaving room for KV cache.
+
+```bash
+# Launch vLLM in the background (runs continuously during Day 1-2):
+nohup vllm serve ml/models/base/teacher \
+  --quantization awq \
+  --max-model-len 4096 \
+  --host 0.0.0.0 \
+  --port 8000 > /tmp/vllm.log 2>&1 &
+
+# Monitor startup (wait for "Uvicorn running on" line):
+tail -f /tmp/vllm.log
+```
+
+Verify it's running:
+
+```bash
+curl -s http://localhost:8000/v1/models | python3 -m json.tool
+```
+
+### Step 3 — Teacher Extraction
+
+Run the locked extraction prompt (validated in Phase 0 step 6) against job postings. Produces structured JSON fields (normalized_title, seniority, occupation_category, skills, salary, etc.) for each job.
+
+Target: 100K–200K extractions.
+
+```bash
+# Test run first (foreground, watch output):
+python -u ml/scripts/teacher_extract.py --workers 4 --limit 1000
+
+# Full run (background):
+nohup python -u ml/scripts/teacher_extract.py --workers 4 > /tmp/teacher_extract.log 2>&1 &
+tail -f /tmp/teacher_extract.log                                     # monitor progress
+
+# Resume after interruption:
+nohup python -u ml/scripts/teacher_extract.py --workers 4 --resume > /tmp/teacher_extract.log 2>&1 &
+```
+
+| Output | Description |
+|---|---|
+| `ml/data/teacher_labels/extractions.jsonl` | Job ID + 18-field structured extraction per record |
+
+### Step 4 — Teacher Matching
+
+Generate scored (resume, job) pairs and hard negatives. Candidate pairs are pre-filtered by country + language + title keyword overlap, then scored by the teacher on a 4-point scale (0.0 / 0.3 / 0.7 / 1.0). Positive pairs (score ≥ 0.7) get hard negatives generated — plausible-but-wrong jobs with specific mismatch dimensions.
+
+Target: 50K scored pairs → triples.
+
+```bash
+# Test run first (foreground):
+python -u ml/scripts/teacher_match.py --workers 4 --limit 1000
+
+# Full run (background):
+nohup python -u ml/scripts/teacher_match.py --workers 4 > /tmp/teacher_match.log 2>&1 &
+tail -f /tmp/teacher_match.log
+
+# Resume after interruption:
+nohup python -u ml/scripts/teacher_match.py --workers 4 --resume > /tmp/teacher_match.log 2>&1 &
+```
+
+| Output | Description |
+|---|---|
+| `ml/data/teacher_labels/match_scores.jsonl` | All scored (resume, job) pairs with relevance score + reasoning |
+| `ml/data/teacher_labels/match_triples.jsonl` | Positive pairs + hard negatives for training |
+
+### Step 5 — Backup & Spot-Check
+
+Run after each day's work — do not let a day's labels live only on the instance.
+
+```bash
+# Push artifacts to CPU server
+export PUSH_REMOTE_HOST=webadmin@46.224.133.10
+export PUSH_REMOTE_BASE=/home/webadmin/Jobl/ml-artifacts
+./ml/scripts/push_artifacts.sh teacher_labels
+
+# Spot-check: review ~50 extractions and ~50 match judgments
+# Focus on underrepresented languages (Ukrainian, Greek, Indonesian/Malay)
+head -50 ml/data/teacher_labels/extractions.jsonl | python3 -m json.tool | less
+head -50 ml/data/teacher_labels/match_scores.jsonl | python3 -m json.tool | less
+```
+
+**Gate:** spot-check ~50 extractions and ~50 match judgments by hand. If quality is bad for a specific language, fix the prompt or flag for manual augmentation before moving to Phase 2.
