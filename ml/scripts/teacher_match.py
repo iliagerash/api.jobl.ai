@@ -37,7 +37,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
-HEARTBEAT_EVERY = 500
+HEARTBEAT_EVERY = 100
 
 _HTML_TAG_RE = re.compile(r"<[^>]+>")
 _WORD_RE = re.compile(r"\b\w{3,}\b")
@@ -275,6 +275,8 @@ def main() -> None:
     parser.add_argument("--model", default="ml/models/base/teacher", help="Model name in vLLM")
     parser.add_argument("--max-pairs", type=int, default=100_000, help="Max candidate pairs to generate (default: 100K)")
     parser.add_argument("--limit", type=int, default=None, help="Max pairs to actually score (for testing)")
+    parser.add_argument("--max-jobs", type=int, default=None, help="Cap jobs loaded (use with large train pools to save memory/time)")
+    parser.add_argument("--max-resumes", type=int, default=None, help="Cap resumes loaded")
     parser.add_argument("--workers", type=int, default=4, help="Concurrent workers (default: 4)")
     parser.add_argument("--resume", action="store_true", help="Skip already-scored pairs")
     args = parser.parse_args()
@@ -284,13 +286,18 @@ def main() -> None:
     from openai import OpenAI
     client = OpenAI(base_url=args.api_base, api_key="not-needed")
 
-    # Load data
+    # Load data (with optional caps to avoid loading millions of records)
+    import random
     print(f"Loading jobs from {args.jobs_input} ...")
     jobs = list(iter_jsonl(args.jobs_input))
+    if args.max_jobs and len(jobs) > args.max_jobs:
+        jobs = random.sample(jobs, args.max_jobs)
     print(f"  {len(jobs):,} jobs loaded")
 
     print(f"Loading resumes from {args.resumes_input} ...")
     resumes = list(iter_jsonl(args.resumes_input))
+    if args.max_resumes and len(resumes) > args.max_resumes:
+        resumes = random.sample(resumes, args.max_resumes)
     print(f"  {len(resumes):,} resumes loaded")
 
     # Generate candidate pairs
