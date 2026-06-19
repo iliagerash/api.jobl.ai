@@ -1060,9 +1060,14 @@ source /home/webadmin/.venv-training/bin/activate
 
 ### Step 2 — Launch Teacher Model
 
-Serve the 72B teacher via vLLM's OpenAI-compatible API. The AWQ 4-bit quantization fits in ~40GB VRAM, leaving room for KV cache.
+Uses **Qwen2.5-32B-Instruct-AWQ** (not the 72B originally planned) — the 32B model generates ~6x faster on a single A100 with minimal quality loss for structured extraction. The AWQ quantization uses ~17GB VRAM, leaving ~57GB for KV cache which supports high-concurrency batching (32 workers).
+
+The 72B model (`ml/models/base/teacher`) is available as a fallback if extraction quality needs improvement, but at ~34s/record vs ~4s/record for 32B, it's impractical for 20K+ extractions on a single GPU.
 
 ```bash
+# Download 32B model (if not already on the instance):
+hf download Qwen/Qwen2.5-32B-Instruct-AWQ --local-dir ml/models/base/teacher
+
 # Launch vLLM in the background (runs continuously during Day 1-2):
 nohup vllm serve ml/models/base/teacher \
   --quantization awq \
@@ -1070,7 +1075,7 @@ nohup vllm serve ml/models/base/teacher \
   --host 0.0.0.0 \
   --port 8000 > /tmp/vllm.log 2>&1 &
 
-# Monitor startup (wait for "Uvicorn running on" line):
+# Monitor startup (wait for CUDA graph capture to finish):
 tail -f /tmp/vllm.log
 ```
 
@@ -1078,24 +1083,52 @@ Verify it's running:
 
 ```bash
 curl -s http://localhost:8000/v1/models | python3 -m json.tool
+# Monitor GPU during inference:
+watch -n 2 nvidia-smi
 ```
 
 ### Step 3 — Teacher Extraction
 
 Run the locked extraction prompt (validated in Phase 0 step 6) against job postings. Produces structured JSON fields (normalized_title, seniority, occupation_category, skills, salary, etc.) for each job.
 
-Target: 100K–200K extractions.
+Target: **20K stratified extractions** (diversity across countries/languages matters more than volume for LoRA fine-tuning; 20K is sufficient for all three production models). The `--stratified` flag samples proportionally across country+language buckets with a minimum of 10 per bucket, ensuring underrepresented countries still get coverage.
 
 ```bash
 # Test run first (foreground, watch output):
-python -u ml/scripts/teacher_extract.py --workers 4 --limit 1000
+python -u ml/scripts/teacher_extract.py --model ml/models/base/teacher --workers 32 --limit 100
 
-# Full run (background):
-nohup python -u ml/scripts/teacher_extract.py --workers 4 > /tmp/teacher_extract.log 2>&1 &
-tail -f /tmp/teacher_extract.log                                     # monitor progress
+# Full run (background, ~13 hours at ~25 records/min):
+nohup python -u ml/scripts/teacher_extract.py \
+  --model ml/models/base/teacher \
+  --workers 32 \
+  --limit 20000 \
+  --stratified > /tmp/teacher_extract.log 2>&1 &
+tail -f /tmp/teacher_extract.log
 
 # Resume after interruption:
-nohup python -u ml/scripts/teacher_extract.py --workers 4 --resume > /tmp/teacher_extract.log 2>&1 &
+nohup python -u ml/scripts/teacher_extract.py \
+  --model ml/models/base/teacher \
+  --workers 32 \
+  --limit 20000 \
+  --stratified \
+  --resume > /tmp/teacher_extract.log 2>&1 &
+```
+
+Verify diversity after completion:
+
+```bash
+cat ml/data/teacher_labels/extractions.jsonl | python3 -c "
+import json, sys, collections
+langs = collections.Counter()
+countries = collections.Counter()
+for line in sys.stdin:
+    r = json.loads(line)
+    langs[r.get('language_code','')] += 1
+    countries[r.get('country_code','')] += 1
+print('Top languages:', langs.most_common(10))
+print('Top countries:', countries.most_common(10))
+print('Total countries:', len(countries))
+"
 ```
 
 | Output | Description |
@@ -1110,14 +1143,19 @@ Target: 50K scored pairs → triples.
 
 ```bash
 # Test run first (foreground):
-python -u ml/scripts/teacher_match.py --workers 4 --limit 1000
+python -u ml/scripts/teacher_match.py --model ml/models/base/teacher --workers 32 --limit 1000
 
 # Full run (background):
-nohup python -u ml/scripts/teacher_match.py --workers 4 > /tmp/teacher_match.log 2>&1 &
+nohup python -u ml/scripts/teacher_match.py \
+  --model ml/models/base/teacher \
+  --workers 32 > /tmp/teacher_match.log 2>&1 &
 tail -f /tmp/teacher_match.log
 
 # Resume after interruption:
-nohup python -u ml/scripts/teacher_match.py --workers 4 --resume > /tmp/teacher_match.log 2>&1 &
+nohup python -u ml/scripts/teacher_match.py \
+  --model ml/models/base/teacher \
+  --workers 32 \
+  --resume > /tmp/teacher_match.log 2>&1 &
 ```
 
 | Output | Description |

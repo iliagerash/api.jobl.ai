@@ -54,9 +54,9 @@ MODELS = {
         "verify_lib": "transformers",
     },
     "teacher": {
-        "repo_id": "Qwen/Qwen2.5-72B-Instruct-AWQ",
-        "description": "Teacher model for Day 1-2 labeling (72B AWQ, Apache 2.0)",
-        "size_approx": "~41 GB",
+        "repo_id": "Qwen/Qwen2.5-32B-Instruct-AWQ",
+        "description": "Teacher model for Day 1-2 labeling (32B AWQ, Apache 2.0)",
+        "size_approx": "~17 GB",
         "verify_lib": "transformers",
     },
 }
