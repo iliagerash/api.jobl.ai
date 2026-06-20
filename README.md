@@ -1245,3 +1245,77 @@ export PUSH_REMOTE_BASE=/home/webadmin/Jobl/ml-artifacts
 ```
 
 ONNX export for production CPU inference is deferred to Phase 6 (Day 10) — it doesn't require GPU.
+
+---
+
+## ML Pipeline — Phase 3: Reranker Training (A100 GPU)
+
+Fine-tunes XLM-RoBERTa-large as a CrossEncoder reranker. The reranker scores individual (resume, job) pairs from the bi-encoder's top-100 candidates, producing a relevance score 0.0–1.0 for final ranking.
+
+Uses the 50K teacher-scored pairs directly as training data (graded relevance at four levels: 0.0/0.3/0.7/1.0), skipping the heavy hard-negative mining step since the teacher already provided diverse scored pairs at all quality levels.
+
+### Step 1 — Build Training Data
+
+Converts teacher match scores into CrossEncoder format. Enriches pairs that also appear in match_triples with full resume/job text.
+
+```bash
+python -u ml/scripts/build_reranker_data.py
+```
+
+| Output | Description |
+|---|---|
+| `ml/data/splits/reranker_train.jsonl` | ~44.5K training pairs (text_a, text_b, score) |
+| `ml/data/splits/reranker_val.jsonl` | ~5K validation pairs |
+
+### Step 2 — Train Reranker
+
+Fine-tunes XLM-RoBERTa-large as a CrossEncoder with regression loss. Uses bf16 mixed precision.
+
+Training time: ~37 minutes for 5 epochs with batch size 32 on a single A100.
+
+```bash
+# Make sure vLLM is stopped first:
+pkill -f "vllm serve"
+
+nohup python -u ml/scripts/train_reranker.py --epochs 5 --batch-size 32 > /tmp/train_reranker.log 2>&1 &
+tail -f /tmp/train_reranker.log
+```
+
+Expected training loss: stabilizes around ~0.48 by epoch 5.
+
+Note: the `CrossEncoderTrainer` saves checkpoints in subdirectories. After training, save the final model explicitly:
+
+```bash
+python -c "
+from sentence_transformers.cross_encoder import CrossEncoder
+import glob
+latest = sorted(glob.glob('ml/models/exported/reranker/checkpoint-*'))[-1]
+model = CrossEncoder(latest)
+model.save('ml/models/exported/reranker-final')
+print(f'Saved from {latest} to ml/models/exported/reranker-final')
+"
+```
+
+| Output | Description |
+|---|---|
+| `ml/models/exported/reranker-final/` | Trained CrossEncoder model |
+
+### Step 3 — Evaluate Reranker
+
+Groups val pairs by resume, reranks with the CrossEncoder, computes NDCG@10 and MAP.
+
+```bash
+python -u ml/scripts/eval_reranker.py --model ml/models/exported/reranker-final
+```
+
+**Gate:** NDCG@10 ≥ 0.7 (script prints GATE PASSED/FAILED). Our result: **NDCG@10 = 0.854, MAP = 0.429**.
+
+### Step 4 — Backup
+
+```bash
+export PUSH_REMOTE_HOST=webadmin@46.224.133.10
+export PUSH_REMOTE_BASE=/home/webadmin/Jobl/ml-artifacts
+./ml/scripts/push_artifacts.sh reranker
+```
+
+ONNX export for production CPU inference is deferred to Phase 6 (Day 10).

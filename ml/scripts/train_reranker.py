@@ -116,6 +116,8 @@ def main() -> None:
     )
     trainer.train()
 
+    # Save the final model properly
+    model.save(args.output_dir)
     print(f"\nModel saved to {args.output_dir}")
 
     # Sanity check
