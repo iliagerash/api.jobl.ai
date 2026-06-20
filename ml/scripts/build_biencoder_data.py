@@ -66,10 +66,22 @@ def main() -> None:
     # Load all scored pairs for mining additional negatives (score < 0.3)
     print(f"Loading scores from {args.scores_input} ...")
     negative_jobs: list[dict] = []
-    for record in iter_jsonl(args.scores_input):
-        score = record.get("score")
-        if score is not None and score <= 0.3:
-            negative_jobs.append(record)
+    parse_errors = 0
+    with open(args.scores_input, encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                record = json.loads(line)
+            except json.JSONDecodeError:
+                parse_errors += 1
+                continue
+            score = record.get("score")
+            if score is not None and score <= 0.3:
+                negative_jobs.append(record)
+    if parse_errors:
+        print(f"  Skipped {parse_errors:,} malformed lines")
     print(f"  {len(negative_jobs):,} negative-scored pairs available for additional negatives")
 
     # Build training examples
