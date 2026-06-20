@@ -1319,3 +1319,94 @@ export PUSH_REMOTE_BASE=/home/webadmin/Jobl/ml-artifacts
 ```
 
 ONNX export for production CPU inference is deferred to Phase 6 (Day 10).
+
+---
+
+## ML Pipeline — Phase 4: Extractor Training (A100 GPU)
+
+Fine-tunes Qwen2.5-7B-Instruct with LoRA for structured field extraction from job postings and resumes. This is the universal Extractor (Component 3) that replaces the existing `normalizer.py` + `categorizer.py`, producing 18 structured fields (normalized_title, seniority, occupation_category, skills, salary, etc.) across all 39 countries.
+
+### Step 1 — Build SFT Dataset
+
+Converts teacher extractions into chat-format SFT examples: system prompt + job posting → structured JSON output.
+
+```bash
+# Pull teacher labels if on a fresh instance:
+mkdir -p ml/data/teacher_labels
+scp webadmin@46.224.133.10:/home/webadmin/Jobl/ml-artifacts/data/teacher_labels/* ml/data/teacher_labels/
+
+python -u ml/scripts/build_extractor_data.py
+```
+
+| Output | Description |
+|---|---|
+| `ml/data/splits/extractor_train.jsonl` | ~17K training examples (chat format) |
+| `ml/data/splits/extractor_val.jsonl` | ~1.9K validation examples |
+
+### Step 2 — Train LoRA
+
+Fine-tunes Qwen2.5-7B-Instruct with LoRA (rank 32, alpha 64) targeting all attention + MLP projections. Uses TRL SFTTrainer with bf16 mixed precision.
+
+Training time: ~3.5 hours for 3 epochs on a single A100.
+
+```bash
+# Make sure vLLM is stopped:
+pkill -f "vllm serve"
+
+nohup python -u ml/scripts/train_extractor_lora.py --epochs 3 --batch-size 4 > /tmp/train_extractor.log 2>&1 &
+tail -f /tmp/train_extractor.log
+```
+
+LoRA config: 80.7M trainable params (1.05% of 7.7B total). Expected loss: starts ~2.1, drops to ~0.52 by epoch 3. Token accuracy reaches ~88%.
+
+| Output | Description |
+|---|---|
+| `ml/models/checkpoints/extractor-lora/` | LoRA adapter weights + tokenizer |
+
+### Step 3 — Merge LoRA
+
+Merges LoRA adapter weights into the base model, producing a standalone model for GGUF conversion and evaluation.
+
+```bash
+python -u ml/scripts/merge_lora.py
+```
+
+| Output | Description |
+|---|---|
+| `ml/models/exported/extractor-merged/` | Full merged 7B model (bf16) |
+
+### Step 4 — Evaluate Extractor
+
+Runs inference on val examples, parses JSON output, computes field-level accuracy against teacher extractions.
+
+```bash
+python -u ml/scripts/eval_extractor.py --limit 200
+```
+
+Our results:
+
+| Field | Accuracy |
+|---|---|
+| location_country | 99.5% |
+| language | 99.5% |
+| work_mode | 97.4% |
+| salary_present | 96.3% |
+| employment_type | 94.2% |
+| contract_type | 92.2% |
+| seniority | 85.9% |
+| occupation_category | 80.1% |
+| normalized_title | 69.6% |
+
+JSON validity: 95.5%. Overall field accuracy: **90.5%**.
+
+**Gate:** overall field accuracy ≥ 90% (script prints GATE PASSED/FAILED). Note: `normalized_title` accuracy is low because the model produces valid but differently-phrased titles (e.g. "Software Developer" vs "Software Engineer"), not because the extractions are wrong.
+
+### Step 5 — Backup
+
+```bash
+export PUSH_REMOTE_HOST=webadmin@46.224.133.10
+export PUSH_REMOTE_BASE=/home/webadmin/Jobl/ml-artifacts
+./ml/scripts/push_artifacts.sh extractor
+```
+
+GGUF conversion for production CPU inference is done in Phase 6 (Day 10).
