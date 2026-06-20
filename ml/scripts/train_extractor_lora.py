@@ -134,13 +134,15 @@ def main() -> None:
 
     # Trainer
     print(f"\nStarting LoRA training: {args.epochs} epochs, batch={args.batch_size}x{args.gradient_accumulation}={effective_batch}, lr={args.lr}")
+    # Truncate examples to max_seq_length via tokenizer
+    tokenizer.model_max_length = args.max_seq_length
+
     trainer = SFTTrainer(
         model=model,
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
         processing_class=tokenizer,
-        max_seq_length=args.max_seq_length,
     )
     trainer.train()
 
