@@ -1410,3 +1410,97 @@ export PUSH_REMOTE_BASE=/home/webadmin/Jobl/ml-artifacts
 ```
 
 GGUF conversion for production CPU inference is done in Phase 6 (Day 10).
+
+---
+
+## ML Pipeline — Phase 5: Full-Corpus Inference (A100 GPU)
+
+Encodes all jobs and resumes with the trained bi-encoder, producing dense vectors for ANN search in production. The extractor is NOT run over the full corpus (1.4M jobs at ~1-2s/record would take ~16 days) — it's designed for incremental use on new postings as they arrive.
+
+### Step 1 — Encode Full Corpus
+
+Encodes all jobs (train + val pools = ~1.4M) and resumes (~225K) with locale prefixes matching the training format.
+
+```bash
+# Test with 1000 first:
+python -u ml/scripts/full_corpus_embed.py --limit 1000
+
+# Full run (~3 hours on A100):
+nohup python -u ml/scripts/full_corpus_embed.py --batch-size 256 > /tmp/full_corpus_embed.log 2>&1 &
+tail -f /tmp/full_corpus_embed.log
+```
+
+Our results: 1,617,995 vectors encoded in ~3 hours at 148-203 texts/sec.
+
+| Output | Size | Description |
+|---|---|---|
+| `ml/data/vectors/job_vectors.npy` | 5.71 GB | 1,392,877 × 1024 float32 matrix |
+| `ml/data/vectors/job_ids.json` | — | Ordered list of job IDs matching vector rows |
+| `ml/data/vectors/resume_vectors.npy` | 0.92 GB | 225,118 × 1024 float32 matrix |
+| `ml/data/vectors/resume_ids.json` | — | Ordered list of resume IDs matching vector rows |
+
+### Step 2 — Backup
+
+```bash
+export PUSH_REMOTE_HOST=webadmin@46.224.133.10
+export PUSH_REMOTE_BASE=/home/webadmin/Jobl/ml-artifacts
+./ml/scripts/push_artifacts.sh corpus_outputs
+```
+
+---
+
+## ML Pipeline — Phase 6: Packaging & Export (A100 GPU or CPU)
+
+Convert trained models to production-serving formats: ONNX for the bi-encoder and reranker (CPU inference via onnxruntime), GGUF Q4_K_M for the extractor (CPU inference via llama.cpp).
+
+### Step 1 — ONNX Export (Bi-Encoder + Reranker)
+
+Exports both models to ONNX format for fast CPU inference. Tries `optimum` first, falls back to `torch.onnx.export`.
+
+```bash
+pip install optimum onnxruntime    # if not already installed
+python -u ml/scripts/export_onnx.py --model both
+python -u ml/scripts/export_onnx.py --model biencoder   # single model
+python -u ml/scripts/export_onnx.py --model reranker    # single model
+```
+
+| Output | Description |
+|---|---|
+| `ml/models/exported/biencoder-onnx/` | ONNX bi-encoder + tokenizer |
+| `ml/models/exported/reranker-onnx/` | ONNX reranker + tokenizer |
+
+### Step 2 — GGUF Conversion (Extractor)
+
+Converts the merged 7B extractor to GGUF Q4_K_M format (~4-5 GB) for CPU inference via llama-cpp-python. Clones llama.cpp automatically for the converter and quantizer.
+
+```bash
+./ml/scripts/convert_gguf.sh
+# Or with a different quantization level:
+./ml/scripts/convert_gguf.sh ml/models/exported/extractor-merged ml/models/exported/extractor-gguf Q5_K_M
+```
+
+| Output | Description |
+|---|---|
+| `ml/models/exported/extractor-gguf/model-Q4_K_M.gguf` | Quantized 7B extractor (~4-5 GB) |
+
+If field-level accuracy drops >5% vs the full-precision model after quantization, fall back to Q5_K_M or Q8_0.
+
+### Step 3 — Final Backup
+
+Push all artifacts to remote storage — models, vectors, training data, configs.
+
+```bash
+export PUSH_REMOTE_HOST=webadmin@46.224.133.10
+export PUSH_REMOTE_BASE=/home/webadmin/Jobl/ml-artifacts
+./ml/scripts/push_artifacts.sh final
+```
+
+### Production Artifacts Summary
+
+| Component | Format | Size | Runtime |
+|---|---|---|---|
+| Bi-encoder | ONNX | ~1.2 GB | onnxruntime |
+| Reranker | ONNX | ~2.2 GB | onnxruntime |
+| Extractor | GGUF Q4_K_M | ~4-5 GB | llama-cpp-python |
+| Job vectors | numpy .npy | 5.71 GB | pgvector / Qdrant |
+| Resume vectors | numpy .npy | 0.92 GB | pgvector / Qdrant |
