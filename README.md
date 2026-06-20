@@ -1180,3 +1180,68 @@ head -50 ml/data/teacher_labels/match_scores.jsonl | python3 -m json.tool | less
 ```
 
 **Gate:** spot-check ~50 extractions and ~50 match judgments by hand. If quality is bad for a specific language, fix the prompt or flag for manual augmentation before moving to Phase 2.
+
+---
+
+## ML Pipeline — Phase 2: Bi-Encoder Training (A100 GPU)
+
+Fine-tunes the Harrier-OSS-v1-0.6B embedding model on teacher-generated match triples. The trained bi-encoder retrieves the top-100 candidate jobs/resumes for a given query via ANN search in production.
+
+### Step 1 — Build Training Data
+
+Converts teacher match outputs (scored pairs + hard negatives) into (anchor, positive, negative) triples for Sentence Transformers training.
+
+```bash
+python -u ml/scripts/build_biencoder_data.py
+```
+
+| Output | Description |
+|---|---|
+| `ml/data/splits/biencoder_train.jsonl` | ~13K training triples (90% split) |
+| `ml/data/splits/biencoder_val.jsonl` | ~1.5K validation triples (10% split) |
+
+### Step 2 — Train Bi-Encoder
+
+Fine-tunes Harrier-OSS-v1-0.6B with `MultipleNegativesRankingLoss` (in-batch negatives + mined hard negatives from the teacher). Uses bf16 mixed precision on the A100.
+
+Training time: ~30 minutes for 3 epochs with batch size 16 on a single A100.
+
+```bash
+# Make sure vLLM is stopped first (frees GPU memory):
+pkill -f "vllm serve"
+
+python -u ml/scripts/train_biencoder.py --epochs 3 --batch-size 16
+
+# Or run in background:
+nohup python -u ml/scripts/train_biencoder.py --epochs 3 --batch-size 16 > /tmp/train_biencoder.log 2>&1 &
+tail -f /tmp/train_biencoder.log
+```
+
+Expected training loss: starts ~1.6, drops to ~0.2 by epoch 3.
+
+| Output | Description |
+|---|---|
+| `ml/models/exported/biencoder/` | Trained Sentence Transformers model (1024-dim embeddings) |
+| `ml/models/checkpoints/biencoder/` | Training checkpoints (latest 2 kept) |
+
+### Step 3 — Evaluate Bi-Encoder
+
+Evaluates retrieval quality on the validation set: encodes all val anchors and candidates, computes top-K nearest neighbors, checks if the true positive is retrieved.
+
+```bash
+python -u ml/scripts/eval_biencoder.py
+```
+
+Metrics reported: Recall@10, Recall@100, MRR — with per-country breakdown.
+
+**Gate:** Recall@100 ≥ 85% (script prints GATE PASSED/FAILED). Our result: **Recall@100 = 98.8%, Recall@10 = 85.2%, MRR = 0.51**.
+
+### Step 4 — Backup
+
+```bash
+export PUSH_REMOTE_HOST=webadmin@46.224.133.10
+export PUSH_REMOTE_BASE=/home/webadmin/Jobl/ml-artifacts
+./ml/scripts/push_artifacts.sh biencoder
+```
+
+ONNX export for production CPU inference is deferred to Phase 6 (Day 10) — it doesn't require GPU.
