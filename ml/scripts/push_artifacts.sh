@@ -158,7 +158,8 @@ case "$PHASE" in
         push_dir "$LOCAL_BASE/ml/models/exported/reranker" "models/reranker"
         ;;
     extractor)
-        push_dir "$LOCAL_BASE/ml/models/exported/extractor" "models/extractor"
+        push_dir "$LOCAL_BASE/ml/models/exported/extractor-merged" "models/extractor-merged"
+        push_dir "$LOCAL_BASE/ml/models/checkpoints/extractor-lora" "models/extractor-lora"
         ;;
     corpus_outputs)
         push_dir "$LOCAL_BASE/ml/data/splits" "data/splits"
