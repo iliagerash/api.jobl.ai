@@ -121,8 +121,19 @@ def verify_biencoder(onnx_dir: str) -> None:
     tokenizer = AutoTokenizer.from_pretrained(onnx_dir, trust_remote_code=True)
     session = ort.InferenceSession(os.path.join(onnx_dir, "model.onnx"))
 
+    # Get required input names from the ONNX model
+    required_inputs = {inp.name for inp in session.get_inputs()}
+    print(f"  ONNX inputs: {required_inputs}")
+
     inputs = tokenizer("Senior Software Engineer with Python experience", return_tensors="np", padding=True, truncation=True)
-    outputs = session.run(None, {k: v for k, v in inputs.items() if k in ["input_ids", "attention_mask"]})
+
+    # Add position_ids if required
+    if "position_ids" in required_inputs and "position_ids" not in inputs:
+        seq_len = inputs["input_ids"].shape[1]
+        inputs["position_ids"] = np.arange(seq_len, dtype=np.int64).reshape(1, -1)
+
+    feed = {k: v for k, v in inputs.items() if k in required_inputs}
+    outputs = session.run(None, feed)
     print(f"  Output shape: {outputs[0].shape}")
     print(f"  VERIFY OK")
 
