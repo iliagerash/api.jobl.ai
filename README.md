@@ -1453,25 +1453,48 @@ export PUSH_REMOTE_BASE=/home/webadmin/Jobl/ml-artifacts
 
 Convert trained models to production-serving formats: ONNX for the bi-encoder and reranker (CPU inference via onnxruntime), GGUF Q4_K_M for the extractor (CPU inference via llama.cpp).
 
-### Step 1 — ONNX Export (Bi-Encoder + Reranker)
-
-Exports both models to ONNX format for fast CPU inference. Tries `optimum` first, falls back to `torch.onnx.export`.
+**Disk space note:** the GGUF conversion needs ~30GB free (15GB f16 intermediate + 4.4GB quantized output + working space). Delete base/teacher models first if disk is tight:
 
 ```bash
-pip install optimum onnxruntime    # if not already installed
-python -u ml/scripts/export_onnx.py --model both
-python -u ml/scripts/export_onnx.py --model biencoder   # single model
-python -u ml/scripts/export_onnx.py --model reranker    # single model
+rm -rf ml/models/base/teacher ml/models/base/teacher-32b
 ```
+
+### Step 1 — ONNX Export (Bi-Encoder + Reranker)
+
+Exports both models to ONNX format for fast CPU inference. Tries `optimum` first, falls back to `torch.onnx.export`. The Harrier bi-encoder requires `position_ids` as an ONNX input — the export script handles this automatically.
+
+```bash
+pip install optimum[onnxruntime] onnxscript
+python -u ml/scripts/export_onnx.py --model both
+```
+
+TracerWarnings during export are normal and can be ignored. Verification runs automatically after export.
 
 | Output | Description |
 |---|---|
-| `ml/models/exported/biencoder-onnx/` | ONNX bi-encoder + tokenizer |
+| `ml/models/exported/biencoder-onnx/` | ONNX bi-encoder + tokenizer (requires input_ids, attention_mask, position_ids) |
 | `ml/models/exported/reranker-onnx/` | ONNX reranker + tokenizer |
 
 ### Step 2 — GGUF Conversion (Extractor)
 
-Converts the merged 7B extractor to GGUF Q4_K_M format (~4-5 GB) for CPU inference via llama-cpp-python. Clones llama.cpp automatically for the converter and quantizer.
+Converts the merged 7B extractor to GGUF Q4_K_M format (4.4 GB) for CPU inference via llama-cpp-python. Clones llama.cpp automatically for the converter and quantizer.
+
+**Prerequisites:** `cmake` and `build-essential` must be installed for building the llama.cpp quantizer:
+
+```bash
+sudo apt install -y cmake build-essential
+```
+
+**Important:** copy the original base model tokenizer files to the merged model directory before conversion (the LoRA merge may save incompatible tokenizer metadata):
+
+```bash
+cp ml/models/base/extractor/tokenizer* ml/models/exported/extractor-merged/
+cp ml/models/base/extractor/vocab* ml/models/exported/extractor-merged/ 2>/dev/null
+cp ml/models/base/extractor/merges* ml/models/exported/extractor-merged/ 2>/dev/null
+cp ml/models/base/extractor/special_tokens* ml/models/exported/extractor-merged/ 2>/dev/null
+```
+
+Then run conversion:
 
 ```bash
 ./ml/scripts/convert_gguf.sh
@@ -1479,28 +1502,44 @@ Converts the merged 7B extractor to GGUF Q4_K_M format (~4-5 GB) for CPU inferen
 ./ml/scripts/convert_gguf.sh ml/models/exported/extractor-merged ml/models/exported/extractor-gguf Q5_K_M
 ```
 
+Our result: 14.5 GB (f16) → **4.4 GB (Q4_K_M)**, 4.91 bits per weight. Quantization took ~80 seconds.
+
 | Output | Description |
 |---|---|
-| `ml/models/exported/extractor-gguf/model-Q4_K_M.gguf` | Quantized 7B extractor (~4-5 GB) |
+| `ml/models/exported/extractor-gguf/model-Q4_K_M.gguf` | Quantized 7B extractor (4.4 GB) |
 
 If field-level accuracy drops >5% vs the full-precision model after quantization, fall back to Q5_K_M or Q8_0.
 
 ### Step 3 — Final Backup
 
-Push all artifacts to remote storage — models, vectors, training data, configs.
+Push all artifacts to remote storage — models, vectors, training data, configs. After backup, the A100 can be shut down.
 
 ```bash
 export PUSH_REMOTE_HOST=webadmin@46.224.133.10
 export PUSH_REMOTE_BASE=/home/webadmin/Jobl/ml-artifacts
 ./ml/scripts/push_artifacts.sh final
+
+# Archive venv before shutting down
+tar czf /tmp/venv-training.tar.gz -C /home/webadmin .venv-training
+scp /tmp/venv-training.tar.gz webadmin@46.224.133.10:/home/webadmin/Jobl/
 ```
 
 ### Production Artifacts Summary
 
-| Component | Format | Size | Runtime |
+All trained, exported, and ready for deployment on the CPU production server.
+
+| Component | Format | Size | Runtime | When it runs |
+|---|---|---|---|---|
+| Bi-encoder | ONNX | ~1.2 GB | onnxruntime | Real-time, every query |
+| Reranker | ONNX | ~2.2 GB | onnxruntime | Real-time, every query |
+| Extractor | GGUF Q4_K_M | 4.4 GB | llama-cpp-python | Batch, on new postings |
+| Job vectors | numpy .npy | 5.71 GB | pgvector / Qdrant | Loaded at startup |
+| Resume vectors | numpy .npy | 0.92 GB | pgvector / Qdrant | Loaded at startup |
+
+### Training Results Summary
+
+| Model | Metric | Result | Gate |
 |---|---|---|---|
-| Bi-encoder | ONNX | ~1.2 GB | onnxruntime |
-| Reranker | ONNX | ~2.2 GB | onnxruntime |
-| Extractor | GGUF Q4_K_M | ~4-5 GB | llama-cpp-python |
-| Job vectors | numpy .npy | 5.71 GB | pgvector / Qdrant |
-| Resume vectors | numpy .npy | 0.92 GB | pgvector / Qdrant |
+| Bi-encoder | Recall@100 | 98.8% | ≥ 85% ✅ |
+| Reranker | NDCG@10 | 0.854 | ≥ 0.7 ✅ |
+| Extractor | Field accuracy | 90.5% | ≥ 90% ✅ |
