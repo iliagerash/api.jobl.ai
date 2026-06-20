@@ -392,6 +392,39 @@ def test_full_pipeline(biencoder_dir: str, reranker_dir: str, vectors_dir: str) 
 
 # ── Main ─────────────────────────────────────────────────────────────────────
 
+def get_memory_mb() -> float:
+    """Get current process RSS memory in MB."""
+    try:
+        import resource
+        return resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024  # Linux: KB -> MB
+    except Exception:
+        return 0.0
+
+
+def get_system_memory() -> dict:
+    """Get system memory info."""
+    try:
+        with open("/proc/meminfo") as f:
+            info = {}
+            for line in f:
+                parts = line.split()
+                if parts[0] in ("MemTotal:", "MemAvailable:", "MemFree:"):
+                    info[parts[0].rstrip(":")] = int(parts[1]) / 1024  # KB -> MB
+            return info
+    except Exception:
+        return {}
+
+
+def print_memory(label: str) -> None:
+    """Print current memory usage."""
+    process_mb = get_memory_mb()
+    sys_mem = get_system_memory()
+    total = sys_mem.get("MemTotal", 0)
+    available = sys_mem.get("MemAvailable", 0)
+    used = total - available if total else 0
+    print(f"  [{label}] Process RSS: {process_mb:.0f} MB | System: {used:.0f}/{total:.0f} MB used ({available:.0f} MB available)")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Test ML pipeline models on CPU")
     parser.add_argument("--biencoder-dir", default="ml/models/exported/biencoder-onnx")
@@ -402,21 +435,90 @@ def main() -> None:
     parser.add_argument("--skip-vectors", action="store_true", help="Skip vector index test (saves 6GB RAM)")
     args = parser.parse_args()
 
+    print("="*60)
+    print("MEMORY BASELINE")
+    print("="*60)
+    print_memory("before loading anything")
+
     results = {}
 
-    # Individual model tests
+    # Load all models first, then run tests — simulates production where
+    # everything is loaded simultaneously at startup
+    print("\n" + "="*60)
+    print("PHASE 1: Load all models (memory test)")
+    print("="*60)
+
+    import onnxruntime as ort
+    from transformers import AutoTokenizer
+
+    # Bi-encoder
+    print("\n  Loading bi-encoder ONNX ...")
+    bi_tokenizer = AutoTokenizer.from_pretrained(args.biencoder_dir, trust_remote_code=True)
+    bi_session = ort.InferenceSession(
+        os.path.join(args.biencoder_dir, "model.onnx"),
+        providers=["CPUExecutionProvider"],
+    )
+    print_memory("after bi-encoder")
+
+    # Reranker
+    print("\n  Loading reranker ONNX ...")
+    re_tokenizer = AutoTokenizer.from_pretrained(args.reranker_dir, trust_remote_code=True)
+    re_session = ort.InferenceSession(
+        os.path.join(args.reranker_dir, "model.onnx"),
+        providers=["CPUExecutionProvider"],
+    )
+    print_memory("after bi-encoder + reranker")
+
+    # Vectors
+    job_vectors = None
+    job_ids = None
+    if not args.skip_vectors:
+        print("\n  Loading vectors ...")
+        job_vectors_path = os.path.join(args.vectors_dir, "job_vectors.npy")
+        job_ids_path = os.path.join(args.vectors_dir, "job_ids.json")
+        if os.path.exists(job_vectors_path):
+            job_vectors = np.load(job_vectors_path)
+            with open(job_ids_path) as f:
+                job_ids = json.load(f)
+            print(f"  Job vectors: {job_vectors.shape}")
+            print_memory("after bi-encoder + reranker + vectors")
+
+    # Extractor
+    llm = None
+    if not args.skip_extractor:
+        print("\n  Loading extractor GGUF ...")
+        if os.path.exists(args.extractor_gguf):
+            from llama_cpp import Llama
+            llm = Llama(model_path=args.extractor_gguf, n_ctx=2048, n_threads=4, verbose=False)
+            print_memory("after ALL models loaded")
+
+    print("\n" + "="*60)
+    print("PHASE 2: Run tests (with all models loaded)")
+    print("="*60)
+
+    # Bi-encoder test
     results["biencoder"] = test_biencoder(args.biencoder_dir)
+
+    # Reranker test
     results["reranker"] = test_reranker(args.reranker_dir)
 
+    # Vector test
     if not args.skip_vectors:
         results["vectors"] = test_vectors(args.vectors_dir)
 
+    # Extractor test
     if not args.skip_extractor:
         results["extractor"] = test_extractor(args.extractor_gguf)
 
     # Full pipeline test
     if not args.skip_vectors:
         results["full_pipeline"] = test_full_pipeline(args.biencoder_dir, args.reranker_dir, args.vectors_dir)
+
+    # Final memory
+    print("\n" + "="*60)
+    print("FINAL MEMORY")
+    print("="*60)
+    print_memory("after all tests complete")
 
     # Summary
     print("\n" + "="*60)
