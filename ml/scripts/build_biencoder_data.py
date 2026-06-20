@@ -67,7 +67,7 @@ def main() -> None:
     print(f"Loading scores from {args.scores_input} ...")
     negative_jobs: list[dict] = []
     parse_errors = 0
-    with open(args.scores_input, encoding="utf-8") as f:
+    with open(args.scores_input, encoding="utf-8", errors="replace") as f:
         for line in f:
             line = line.strip()
             if not line:
