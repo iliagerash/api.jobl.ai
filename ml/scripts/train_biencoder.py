@@ -93,7 +93,7 @@ def main() -> None:
         per_device_train_batch_size=args.batch_size,
         learning_rate=args.lr,
         warmup_steps=warmup_steps,
-        fp16=True,
+        bf16=True,
         save_strategy="epoch",
         save_total_limit=2,
         logging_steps=50,
