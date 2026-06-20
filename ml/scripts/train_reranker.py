@@ -34,16 +34,19 @@ def iter_jsonl(path: str):
                     continue
 
 
-def load_examples(path: str):
-    """Load as CrossEncoder InputExample list."""
-    from sentence_transformers.cross_encoder import InputExample
-    examples = []
+def load_dataset(path: str):
+    """Load as a HuggingFace Dataset for CrossEncoder training."""
+    from datasets import Dataset
+    texts_a, texts_b, scores = [], [], []
     for record in iter_jsonl(path):
-        examples.append(InputExample(
-            texts=[record["text_a"], record["text_b"]],
-            label=float(record["score"]),
-        ))
-    return examples
+        texts_a.append(record["text_a"])
+        texts_b.append(record["text_b"])
+        scores.append(float(record["score"]))
+    return Dataset.from_dict({
+        "sentence1": texts_a,
+        "sentence2": texts_b,
+        "label": scores,
+    })
 
 
 def main() -> None:
@@ -70,36 +73,48 @@ def main() -> None:
 
     # Load training data
     print(f"Loading training data from {args.train_data} ...")
-    train_examples = load_examples(args.train_data)
-    print(f"  {len(train_examples):,} training pairs")
+    train_dataset = load_dataset(args.train_data)
+    print(f"  {len(train_dataset):,} training pairs")
 
     # Load val data
-    val_examples = None
+    val_dataset = None
     if os.path.exists(args.val_data):
         print(f"Loading validation data from {args.val_data} ...")
-        val_examples = load_examples(args.val_data)
-        print(f"  {len(val_examples):,} validation pairs")
+        val_dataset = load_dataset(args.val_data)
+        print(f"  {len(val_dataset):,} validation pairs")
 
     # Calculate steps
-    steps_per_epoch = max(1, len(train_examples) // args.batch_size)
+    steps_per_epoch = max(1, len(train_dataset) // args.batch_size)
     total_steps = steps_per_epoch * args.epochs
     warmup_steps = int(total_steps * args.warmup_ratio)
     print(f"  Total steps: {total_steps:,}, warmup: {warmup_steps:,}")
 
+    # Training arguments
+    from sentence_transformers.cross_encoder.training_args import CrossEncoderTrainingArguments
+    from sentence_transformers.cross_encoder.trainer import CrossEncoderTrainer
+
+    training_args = CrossEncoderTrainingArguments(
+        output_dir=args.output_dir,
+        num_train_epochs=args.epochs,
+        per_device_train_batch_size=args.batch_size,
+        learning_rate=args.lr,
+        warmup_steps=warmup_steps,
+        bf16=True,
+        save_strategy="epoch",
+        save_total_limit=2,
+        logging_steps=50,
+        report_to="none",
+    )
+
     # Train
     print(f"\nStarting training: {args.epochs} epochs, batch_size={args.batch_size}, lr={args.lr}")
-    model.fit(
-        train_dataloader=None,
-        train_examples=train_examples,
-        evaluator=None,
-        epochs=args.epochs,
-        warmup_steps=warmup_steps,
-        optimizer_params={"lr": args.lr},
-        output_path=args.output_dir,
-        save_best_model=True,
-        show_progress_bar=True,
-        use_amp=True,
+    trainer = CrossEncoderTrainer(
+        model=model,
+        args=training_args,
+        train_dataset=train_dataset,
+        eval_dataset=val_dataset,
     )
+    trainer.train()
 
     print(f"\nModel saved to {args.output_dir}")
 
