@@ -29,17 +29,19 @@ def iter_jsonl(path: str):
                 yield json.loads(line)
 
 
-def load_training_examples(path: str):
-    """Load triples as InputExample objects for Sentence Transformers."""
-    from sentence_transformers import InputExample
-    examples = []
+def load_dataset(path: str):
+    """Load triples as a HuggingFace Dataset for Sentence Transformers v3."""
+    from datasets import Dataset
+    anchors, positives, negatives = [], [], []
     for record in iter_jsonl(path):
-        examples.append(InputExample(texts=[
-            record["anchor"],
-            record["positive"],
-            record["negative"],
-        ]))
-    return examples
+        anchors.append(record["anchor"])
+        positives.append(record["positive"])
+        negatives.append(record["negative"])
+    return Dataset.from_dict({
+        "anchor": anchors,
+        "positive": positives,
+        "negative": negatives,
+    })
 
 
 def main() -> None:
@@ -59,10 +61,10 @@ def main() -> None:
     os.makedirs(args.output_dir, exist_ok=True)
     os.makedirs(args.checkpoint_dir, exist_ok=True)
 
-    from sentence_transformers import SentenceTransformer, losses
+    from sentence_transformers import SentenceTransformer
+    from sentence_transformers.losses import MultipleNegativesRankingLoss
     from sentence_transformers.training_args import SentenceTransformerTrainingArguments
     from sentence_transformers.trainer import SentenceTransformerTrainer
-    from torch.utils.data import DataLoader
 
     # Load model
     print(f"Loading base model from {args.base_model} ...")
@@ -72,17 +74,15 @@ def main() -> None:
 
     # Load training data
     print(f"Loading training data from {args.train_data} ...")
-    train_examples = load_training_examples(args.train_data)
-    print(f"  {len(train_examples):,} training triples")
-
-    # Create dataloader
-    train_dataloader = DataLoader(train_examples, shuffle=True, batch_size=args.batch_size)
+    train_dataset = load_dataset(args.train_data)
+    print(f"  {len(train_dataset):,} training triples")
 
     # Loss function
-    train_loss = losses.MultipleNegativesRankingLoss(model=model)
+    train_loss = MultipleNegativesRankingLoss(model=model)
 
     # Calculate training steps
-    total_steps = len(train_dataloader) * args.epochs
+    steps_per_epoch = max(1, len(train_dataset) // args.batch_size)
+    total_steps = steps_per_epoch * args.epochs
     warmup_steps = int(total_steps * args.warmup_ratio)
     print(f"  Total steps: {total_steps:,}, warmup: {warmup_steps:,}")
 
@@ -101,19 +101,19 @@ def main() -> None:
     )
 
     # Load val data if available
-    val_examples = None
+    val_dataset = None
     if os.path.exists(args.val_data):
         print(f"Loading validation data from {args.val_data} ...")
-        val_examples = load_training_examples(args.val_data)
-        print(f"  {len(val_examples):,} validation triples")
+        val_dataset = load_dataset(args.val_data)
+        print(f"  {len(val_dataset):,} validation triples")
 
     # Train
     print(f"\nStarting training: {args.epochs} epochs, batch_size={args.batch_size}, lr={args.lr}")
     trainer = SentenceTransformerTrainer(
         model=model,
         args=training_args,
-        train_dataset=train_examples,
-        eval_dataset=val_examples,
+        train_dataset=train_dataset,
+        eval_dataset=val_dataset,
         loss=train_loss,
     )
     trainer.train()
