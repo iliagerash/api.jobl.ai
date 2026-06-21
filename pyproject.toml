@@ -12,8 +12,6 @@ dependencies = [
   "psycopg[binary]>=3.2.9",
   "pymysql>=1.1.1",
   "langid>=1.1.6",
-  "torch>=2.7.0",
-  "transformers>=4.52.0",
   "beautifulsoup4>=4.12.0",
   "lxml>=5.0.0",
   "python-dateutil>=2.9.0",
@@ -24,6 +22,7 @@ dependencies = [
   "onnxruntime>=1.18.0",
   "llama-cpp-python>=0.2.80",
   "numpy>=1.26.0",
+  "transformers>=4.52.0",
 ]
 
 [project.optional-dependencies]

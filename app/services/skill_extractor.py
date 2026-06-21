@@ -5,22 +5,19 @@ from sqlalchemy import text
 
 logger = logging.getLogger("jobl.api.skill_extractor")
 
-SKILL_NER_MODEL = "Nucha/Nucha_ITSkillNER_BERT"
-
 
 class SkillExtractor:
-    """Hybrid skill extraction:
-    - English: BERT-based NER (Nucha_ITSkillNER_BERT) for tech + soft skills
-    - All languages: ESCO taxonomy matching from Postgres as baseline/fallback
+    """Extracts skills from text by matching against the skill taxonomy in Postgres.
+
+    Loads all skill labels into memory at init, grouped by language.
+    Matching is case-insensitive with word-boundary checks for short labels.
     """
 
-    def __init__(self, db_session_factory, skill_ner_model: str | None = SKILL_NER_MODEL) -> None:
+    def __init__(self, db_session_factory) -> None:
         self._ready = False
-        self._ner_pipeline = None
-        self._esco_labels: dict[str, dict[str, str]] = {}
-        self._esco_all: dict[str, str] = {}
+        self._labels: dict[str, dict[str, str]] = {}  # lang -> {lowercase_label: preferred_label_en}
+        self._all_labels: dict[str, str] = {}  # lowercase_label -> preferred_label_en
 
-        # Load ESCO labels from Postgres
         try:
             db = db_session_factory()
             try:
@@ -34,36 +31,23 @@ class SkillExtractor:
 
             for lang, label, preferred_en in rows:
                 lower = label.lower()
-                self._esco_labels.setdefault(lang, {})[lower] = preferred_en
-                self._esco_all[lower] = preferred_en
+                self._labels.setdefault(lang, {})[lower] = preferred_en
+                self._all_labels[lower] = preferred_en
 
-            for lang in self._esco_labels:
-                self._esco_labels[lang] = dict(
-                    sorted(self._esco_labels[lang].items(), key=lambda x: -len(x[0]))
+            # Sort by label length descending so longer matches take priority
+            for lang in self._labels:
+                self._labels[lang] = dict(
+                    sorted(self._labels[lang].items(), key=lambda x: -len(x[0]))
                 )
-            self._esco_all = dict(
-                sorted(self._esco_all.items(), key=lambda x: -len(x[0]))
+            self._all_labels = dict(
+                sorted(self._all_labels.items(), key=lambda x: -len(x[0]))
             )
 
-            total_labels = sum(len(v) for v in self._esco_labels.values())
-            logger.info("ESCO taxonomy loaded: %d languages, %d labels", len(self._esco_labels), total_labels)
+            total_labels = sum(len(v) for v in self._labels.values())
+            self._ready = True
+            logger.info("skill extractor loaded: %d languages, %d labels", len(self._labels), total_labels)
         except Exception:
-            logger.exception("failed to load ESCO taxonomy from database")
-
-        # Load BERT NER for English skill extraction
-        if skill_ner_model:
-            try:
-                from transformers import pipeline
-                self._ner_pipeline = pipeline(
-                    "ner",
-                    model=skill_ner_model,
-                    aggregation_strategy="simple",
-                )
-                logger.info("Skill NER loaded: %s", skill_ner_model)
-            except Exception as exc:
-                logger.warning("Skill NER failed to load: %s — English uses ESCO fallback only", exc)
-
-        self._ready = True
+            logger.exception("failed to load skill taxonomy from database")
 
     def is_ready(self) -> bool:
         return self._ready
@@ -73,37 +57,23 @@ class SkillExtractor:
         if not text_input:
             return []
 
+        text_lower = text_input.lower()
         found: dict[str, bool] = {}
 
-        # For English: use BERT NER first (catches tech skills and informal mentions)
-        if language in ("en", None) and self._ner_pipeline is not None:
-            try:
-                entities = self._ner_pipeline(text_input[:2000])
-                for ent in entities:
-                    label = ent.get("word", "").strip()
-                    if label and len(label) >= 2:
-                        # Clean up BERT tokenizer artifacts
-                        label = re.sub(r"\s*##\s*", "", label).strip()
-                        if label:
-                            found[label] = True
-            except Exception:
-                logger.debug("Skill NER extraction failed, falling back to ESCO", exc_info=True)
-
-        # ESCO dictionary matching (all languages, supplements NER for English)
-        text_lower = text_input.lower()
-
+        # Try language-specific labels first, then fall back to all labels
         label_dicts = []
-        if language and language in self._esco_labels:
-            label_dicts.append(self._esco_labels[language])
-        label_dicts.append(self._esco_all)
+        if language and language in self._labels:
+            label_dicts.append(self._labels[language])
+        label_dicts.append(self._all_labels)
 
         for labels in label_dicts:
             for label_lower, preferred_en in labels.items():
                 if preferred_en in found:
                     continue
-                if len(label_lower) < 2:
+                if len(label_lower) < 3:
                     continue
-                if len(label_lower) <= 4:
+                # Word-boundary matching for short labels to avoid false positives
+                if len(label_lower) <= 5:
                     if re.search(rf"\b{re.escape(label_lower)}\b", text_lower):
                         found[preferred_en] = True
                 else:
