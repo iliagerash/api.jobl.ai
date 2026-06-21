@@ -25,7 +25,7 @@ dependencies = [
   "llama-cpp-python>=0.2.80",
   "numpy>=1.26.0",
   "skillNer>=1.0.3",
-  "spacy>=3.7.0",
+  "spacy>=3.5.0,<3.8.0",
 ]
 
 [project.optional-dependencies]

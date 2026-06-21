@@ -54,25 +54,12 @@ class SkillExtractor:
         try:
             import spacy
             from spacy.matcher import PhraseMatcher
-
-            # Patch PhraseMatcher to accept (and ignore) the removed 'attr' kwarg
-            _original_init = PhraseMatcher.__init__
-
-            def _patched_init(self_pm, vocab, attr=None, validate=False):
-                _original_init(self_pm, vocab, validate=validate)
-
-            PhraseMatcher.__init__ = _patched_init
-
             from skillNer.general_params import SKILL_DB
             from skillNer.skill_extractor_class import SkillExtractor as _SkillNER
 
             nlp = spacy.load("en_core_web_lg")
             self._skillner = _SkillNER(nlp, SKILL_DB, PhraseMatcher(nlp.vocab))
             self._nlp = nlp
-
-            # Restore original PhraseMatcher
-            PhraseMatcher.__init__ = _original_init
-
             logger.info("SkillNER loaded (en_core_web_lg + EMSI skill DB)")
         except Exception as exc:
             logger.warning("SkillNER failed to load: %s — English uses ESCO fallback only", exc)
