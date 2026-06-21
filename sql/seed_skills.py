@@ -69,7 +69,7 @@ def load_csv(path: str, language: str | None = None) -> tuple[dict, dict]:
                     "preferred_label_en": preferred if lang == "en" else "",
                     "skill_type": skill_type,
                 }
-            elif lang == "en" and preferred:
+            if lang == "en" and preferred:
                 skills[uri]["preferred_label_en"] = preferred
 
             # Add preferred label (skip overly long labels — they cause false matches)

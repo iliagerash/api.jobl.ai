@@ -60,10 +60,8 @@ class SkillExtractor:
             self._skillner = _SkillNER(nlp, SKILL_DB)
             self._nlp = nlp
             logger.info("SkillNER loaded (en_core_web_lg + EMSI skill DB)")
-        except ImportError:
-            logger.warning("SkillNER or spaCy not available; English uses ESCO fallback only")
-        except OSError:
-            logger.warning("en_core_web_lg not installed; English uses ESCO fallback only. Install with: python -m spacy download en_core_web_lg")
+        except Exception as exc:
+            logger.warning("SkillNER failed to load: %s — English uses ESCO fallback only", exc)
 
         self._ready = True
 
