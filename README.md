@@ -311,6 +311,12 @@ PostgreSQL. Schema managed by Alembic.
 
 **Requirements**: Python 3.11+, PostgreSQL
 
+**Build prerequisites** (needed for `llama-cpp-python` compilation):
+
+```bash
+sudo apt install -y cmake build-essential python3.12-dev
+```
+
 ```bash
 cd api.jobl.ai
 python3 -m venv .venv
