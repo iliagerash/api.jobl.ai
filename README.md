@@ -344,9 +344,6 @@ psql $DATABASE_URL -c "\copy category_map (original_category, category_id) FROM 
 # Seed skill taxonomy (download ESCO CSVs from https://esco.ec.europa.eu/en/use-esco/download)
 # Select: Version=v1.2.1, Content=Classification, Format=CSV, one file per language
 python sql/seed_skills.py --dir data/esco/
-
-# Download spaCy model for SkillNER (English skill extraction)
-python -m spacy download en_core_web_lg
 ```
 
 ### Dependency scopes

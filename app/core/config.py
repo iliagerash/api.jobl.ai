@@ -22,12 +22,18 @@ class Settings(BaseSettings):
     # Categorizer (LightGBM — optional, category field is null if absent)
     categorizer_model_path: str | None = None
 
+    # Bi-encoder (ONNX — optional, embedding field is null if absent)
+    biencoder_model_path: str | None = None
+
+    # Extractor (GGUF — optional, /v1/extract returns 503 if absent)
+    extractor_model_path: str | None = None
+
     # Labelling UI
     verified_labelling: bool = False
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    @field_validator("model_dir", "tokenizer_dir", "categorizer_model_path", mode="after")
+    @field_validator("model_dir", "tokenizer_dir", "categorizer_model_path", "biencoder_model_path", "extractor_model_path", mode="after")
     @classmethod
     def _resolve_path(cls, v: str | None) -> str | None:
         if v is None:
