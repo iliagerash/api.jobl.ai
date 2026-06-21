@@ -119,13 +119,21 @@ def main():
         all_labels.update(labels)
         print(f"  {len(skills)} skills, {len(labels)} labels")
 
-    # Ensure all skills have an English preferred label (fallback to first available)
+    # Ensure all skills have an English preferred label
+    # Priority: English label > first available label
     for uri, skill in all_skills.items():
         if not skill["preferred_label_en"]:
+            # Try English labels first
             for key in all_labels:
-                if key[0] == uri:
+                if key[0] == uri and key[1] == "en":
                     skill["preferred_label_en"] = key[2]
                     break
+            # Fallback to any label
+            if not skill["preferred_label_en"]:
+                for key in all_labels:
+                    if key[0] == uri:
+                        skill["preferred_label_en"] = key[2]
+                        break
 
     print(f"\nTotal: {len(all_skills)} unique skills, {len(all_labels)} labels across {len(csv_files)} files")
 
