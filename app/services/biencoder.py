@@ -12,8 +12,12 @@ class BiEncoder:
         self._ready = False
         try:
             self._tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+            opts = ort.SessionOptions()
+            opts.inter_op_num_threads = 1
+            opts.intra_op_num_threads = 4
             self._session = ort.InferenceSession(
                 f"{model_path}/model.onnx",
+                sess_options=opts,
                 providers=["CPUExecutionProvider"],
             )
             self._input_names = {inp.name for inp in self._session.get_inputs()}

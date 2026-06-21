@@ -5,6 +5,8 @@ from sqlalchemy import text
 
 logger = logging.getLogger("jobl.api.skill_extractor")
 
+_SHORT_ALLOWLIST = frozenset(["aws", "sql", "git", "sap", "css", "php", "ios", "api", "crm", "erp"])
+
 
 class SkillExtractor:
     """Extracts skills from text by matching against the skill taxonomy in Postgres.
@@ -60,20 +62,22 @@ class SkillExtractor:
         text_lower = text_input.lower()
         found: dict[str, bool] = {}
 
-        # Try language-specific labels first, then fall back to all labels
+        # Use language-specific labels if available, otherwise English only
         label_dicts = []
         if language and language in self._labels:
             label_dicts.append(self._labels[language])
-        label_dicts.append(self._all_labels)
+        if "en" in self._labels and language != "en":
+            label_dicts.append(self._labels["en"])
+        if not label_dicts:
+            label_dicts.append(self._all_labels)
 
         for labels in label_dicts:
             for label_lower, preferred_en in labels.items():
                 if preferred_en in found:
                     continue
-                if len(label_lower) < 3:
+                if len(label_lower) < 4 and label_lower not in _SHORT_ALLOWLIST:
                     continue
                 if label_lower in text_lower:
-                    if re.search(rf"\b{re.escape(label_lower)}\b", text_lower):
-                        found[preferred_en] = True
+                    found[preferred_en] = True
 
         return list(found.keys())
