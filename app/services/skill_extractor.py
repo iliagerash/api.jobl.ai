@@ -53,11 +53,12 @@ class SkillExtractor:
         # Load SkillNER for English
         try:
             import spacy
+            from spacy.matcher import PhraseMatcher
             from skillNer.general_params import SKILL_DB
             from skillNer.skill_extractor_class import SkillExtractor as _SkillNER
 
             nlp = spacy.load("en_core_web_lg")
-            self._skillner = _SkillNER(nlp, SKILL_DB)
+            self._skillner = _SkillNER(nlp, SKILL_DB, PhraseMatcher(nlp.vocab))
             self._nlp = nlp
             logger.info("SkillNER loaded (en_core_web_lg + EMSI skill DB)")
         except Exception as exc:
