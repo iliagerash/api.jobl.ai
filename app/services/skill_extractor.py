@@ -72,7 +72,8 @@ class SkillExtractor:
                     continue
                 if len(label_lower) < 3:
                     continue
-                if re.search(rf"\b{re.escape(label_lower)}\b", text_lower):
-                    found[preferred_en] = True
+                if label_lower in text_lower:
+                    if re.search(rf"\b{re.escape(label_lower)}\b", text_lower):
+                        found[preferred_en] = True
 
         return list(found.keys())
