@@ -138,22 +138,27 @@ def main():
         with ThreadPoolExecutor(max_workers=args.workers) as executor:
             futures = {}
 
-            # Submit /process
+            # Build all tasks, then shuffle to interleave types
+            import random
+            tasks = []
             for i in range(args.process_count):
-                f = executor.submit(call_process, client, jobs[i])
-                futures[f] = "process"
-
-            # Submit /embed for jobs
+                tasks.append(("process", i))
             for i in range(args.embed_jobs):
-                text = f"{jobs[i]['title']} {jobs[i]['description']}"[:2000]
-                f = executor.submit(call_embed, client, text, "job")
-                futures[f] = "embed_job"
-
-            # Submit /embed for resumes
+                tasks.append(("embed_job", i))
             for i in range(args.embed_resumes):
-                text = f"{resumes[i]['title']} {resumes[i]['description']}"[:2000]
-                f = executor.submit(call_embed, client, text, "resume")
-                futures[f] = "embed_resume"
+                tasks.append(("embed_resume", i))
+            random.shuffle(tasks)
+
+            for kind, i in tasks:
+                if kind == "process":
+                    f = executor.submit(call_process, client, jobs[i])
+                elif kind == "embed_job":
+                    text = f"{jobs[i]['title']} {jobs[i]['description']}"[:2000]
+                    f = executor.submit(call_embed, client, text, "job")
+                else:
+                    text = f"{resumes[i]['title']} {resumes[i]['description']}"[:2000]
+                    f = executor.submit(call_embed, client, text, "resume")
+                futures[f] = kind
 
             done_counts = {"process": 0, "embed_job": 0, "embed_resume": 0}
             total_tasks = len(futures)
