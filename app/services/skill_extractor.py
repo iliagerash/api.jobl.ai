@@ -72,12 +72,7 @@ class SkillExtractor:
                     continue
                 if len(label_lower) < 3:
                     continue
-                # Word-boundary matching for short labels to avoid false positives
-                if len(label_lower) <= 5:
-                    if re.search(rf"\b{re.escape(label_lower)}\b", text_lower):
-                        found[preferred_en] = True
-                else:
-                    if label_lower in text_lower:
-                        found[preferred_en] = True
+                if re.search(rf"\b{re.escape(label_lower)}\b", text_lower):
+                    found[preferred_en] = True
 
         return list(found.keys())
