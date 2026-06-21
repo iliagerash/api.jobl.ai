@@ -184,6 +184,8 @@ class ProcessResponse(BaseModel):
     application_email: str | None
     expiry_date: str | None
     category: CategoryOut | None
+    embedding: list[float] | None = None
+    skills: list[str] | None = None
 
 
 @router.post("/process", response_model=ProcessResponse)
@@ -289,10 +291,31 @@ def process(body: ProcessRequest, request: Request) -> ProcessResponse:
         except Exception:
             logger.exception("categorizer.predict failed")
 
+    # 7. Embedding (bi-encoder)
+    embedding: list[float] | None = None
+    biencoder = getattr(request.app.state, "biencoder", None)
+    if biencoder and biencoder.is_ready():
+        try:
+            prefixed = f"[lang={lang}][country=XX][type=job] {body.title} — {plain_text[:2000]}"
+            embedding = biencoder.encode(prefixed)
+        except Exception:
+            logger.exception("biencoder.encode failed")
+
+    # 8. Skills (ESCO taxonomy)
+    skills: list[str] | None = None
+    skill_extractor = getattr(request.app.state, "skill_extractor", None)
+    if skill_extractor and skill_extractor.is_ready():
+        try:
+            skills = skill_extractor.extract_skills(f"{body.title} {plain_text}", language=lang)
+        except Exception:
+            logger.exception("skill_extractor.extract_skills failed")
+
     return ProcessResponse(
         title_normalized=title_normalized,
         description_clean=description_clean,
         application_email=application_email,
         expiry_date=expiry_date,
         category=category,
+        embedding=embedding,
+        skills=skills,
     )

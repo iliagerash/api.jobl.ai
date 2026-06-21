@@ -11,19 +11,9 @@ logger = logging.getLogger("jobl.api")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Normalizer (seq2seq model — optional)
-    if settings.model_dir:
-        try:
-            from app.services.normalizer import JobTitleNormalizer
-            app.state.normalizer = JobTitleNormalizer(settings)
-        except Exception:
-            logger.exception("normalizer failed to load; falling back to rules-only")
-            app.state.normalizer = None
-    else:
-        logger.warning("MODEL_DIR not set; normalizer disabled (rules-only fallback)")
-        app.state.normalizer = None
+    app.state.normalizer = None
 
-    # Categorizer (LightGBM — optional)
+# Categorizer (LightGBM — optional)
     if settings.categorizer_model_path:
         try:
             from app.services.categorizer import JobCategorizer
