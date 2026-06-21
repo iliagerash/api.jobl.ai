@@ -1,8 +1,34 @@
 # api.jobl.ai
 
-FastAPI service that processes raw job postings: cleans HTML descriptions, normalizes job titles, extracts expiry dates and application emails, and categorizes jobs into 26 industry categories.
+FastAPI service that processes raw job postings: cleans HTML descriptions, extracts expiry dates and application emails, categorizes jobs into 26 industry categories, generates embedding vectors for semantic search, and extracts skills from multilingual job descriptions.
 
 Includes a background sync worker that pulls jobs from MySQL source databases into PostgreSQL.
+
+## Production Architecture
+
+```
+Scraper flow (every new job):
+  Scraper → POST /v1/process → category + clean description + embedding + skills
+          → stores in scraper DB → flows to job boards
+
+Job board flow (direct submissions):
+  Resume/job submitted → POST /v1/embed → 1024-dim vector
+          → stored in board's MariaDB VECTOR(1024) column
+
+Resume extraction (paying candidates):
+  Job board → OpenAI API (gpt-5-nano) with locked extraction prompt
+            → 18 structured fields (not self-hosted)
+```
+
+### Production Models (30GB server, 4 workers)
+
+| Component | RAM/worker | Purpose |
+|---|---|---|
+| Bi-encoder (ONNX) | ~2.5 GB | Generates 1024-dim embedding vectors for semantic search |
+| LightGBM categorizer | ~50 MB | Classifies jobs into 26 industry categories |
+| Skill taxonomy (ESCO) | ~50 MB | Matches 13,900 skills in 10 languages from Postgres |
+| **Total per worker** | **~2.6 GB** | |
+| **4 workers + Postgres + OS** | **~14.5 GB** | **~15 GB headroom** |
 
 ---
 

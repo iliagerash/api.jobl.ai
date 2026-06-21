@@ -1,5 +1,5 @@
 [Unit]
-Description=Jobl API Service (process mode)
+Description=Jobl API Service
 After=network.target postgresql.service
 
 [Service]
@@ -7,10 +7,10 @@ Type=simple
 User=webadmin
 WorkingDirectory=/home/webadmin/Jobl/api.jobl.ai
 EnvironmentFile=/home/webadmin/Jobl/api.jobl.ai/.env
-ExecStart=/home/webadmin/Jobl/api.jobl.ai/.venv/bin/python serve.py \
-    --mode process \
+ExecStart=/home/webadmin/Jobl/api.jobl.ai/.venv/bin/uvicorn app.main:app \
+    --host 0.0.0.0 \
     --port 8001 \
-    --workers 3
+    --workers 4
 Restart=on-failure
 RestartSec=5
 
