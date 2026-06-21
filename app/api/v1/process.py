@@ -233,16 +233,8 @@ def process(body: ProcessRequest, request: Request) -> ProcessResponse:
             category=category,
         )
 
-    # 3. Normalize title (EN/FR)
-    normalizer = getattr(request.app.state, "normalizer", None)
-    if normalizer and normalizer.is_ready():
-        title_normalized = normalizer.normalize(body.title, lang)
-        if not title_normalized.strip():
-            from app.services.normalizer import pre_strip
-            title_normalized = pre_strip(body.title) or body.title.strip()
-    else:
-        from app.services.normalizer import _normalize_rules_only
-        title_normalized = _normalize_rules_only(body.title)
+    # 3. Title — pass through original (normalizer removed)
+    title_normalized = body.title
 
     # 4. Expiry date — use raw extraction so past dates are still returned
     raw_expiry = extract_expiry_raw(body.description)
