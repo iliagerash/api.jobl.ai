@@ -1,5 +1,5 @@
 [Unit]
-Description=Jobl API Service (process mode)
+Description=Jobl Extractor Service (extractor mode)
 After=network.target postgresql.service
 
 [Service]
@@ -8,9 +8,9 @@ User=webadmin
 WorkingDirectory=/home/webadmin/Jobl/api.jobl.ai
 EnvironmentFile=/home/webadmin/Jobl/api.jobl.ai/.env
 ExecStart=/home/webadmin/Jobl/api.jobl.ai/.venv/bin/python serve.py \
-    --mode process \
-    --port 8001 \
-    --workers 3
+    --mode extractor \
+    --port 8002 \
+    --workers 1
 Restart=on-failure
 RestartSec=5
 

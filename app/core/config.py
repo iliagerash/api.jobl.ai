@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     # Extractor (GGUF — optional, /v1/extract returns 503 if absent)
     extractor_model_path: str | None = None
 
+    # Server mode: "process" (default) or "extractor"
+    server_mode: str = "process"
+
     # Labelling UI
     verified_labelling: bool = False
 
