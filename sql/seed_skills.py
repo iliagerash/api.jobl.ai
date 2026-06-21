@@ -1,184 +1,175 @@
 """
 seed_skills.py
 ────────────────
-Load skill taxonomy into the skills + skill_labels tables.
+Load skill taxonomy into the skills + skill_labels tables from ESCO CSV files.
 
-Downloads the ESCO skills CSV from the EU portal, parses multilingual labels,
-and bulk-inserts into Postgres.
+Download CSVs manually from https://esco.ec.europa.eu/en/use-esco/download
+Select: Version=v1.2.1, Content=Skills, Format=CSV
+Download one file per language needed.
+
+Expected CSV format (ESCO v1.2):
+  conceptUri, skillType, preferredLabel, altLabels, description, ...
 
 Usage:
-    python sql/seed_skills.py
-    python sql/seed_skills.py --csv-path /path/to/skills_en.csv   # use local file
+    # Single language:
+    python sql/seed_skills.py --csv data/esco/skills_en.csv
+
+    # Multiple languages:
+    python sql/seed_skills.py --csv data/esco/skills_en.csv data/esco/skills_es.csv data/esco/skills_de.csv
+
+    # All CSVs in a directory:
+    python sql/seed_skills.py --dir data/esco/
 """
 
 import argparse
 import csv
-import io
+import glob
 import os
+import re
 import sys
-import urllib.request
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-ESCO_SKILLS_URL = "https://ec.europa.eu/esco/api/resource/skill?language={lang}&offset={offset}&limit={limit}&full=true"
 
-# Supported languages matching our corpus
-LANGUAGES = ["en", "es", "de", "fr", "pt", "uk", "el", "nl", "it", "da", "ar"]
+def parse_language_from_filename(path: str) -> str | None:
+    """Extract language code from filename like 'skills_en.csv'."""
+    basename = os.path.basename(path)
+    match = re.search(r"skills_(\w{2})\.csv", basename)
+    return match.group(1) if match else None
 
 
-def download_esco_skills() -> list[dict]:
-    """Download skills from ESCO API."""
-    import httpx
+def extract_uuid(concept_uri: str) -> str:
+    """Extract UUID from ESCO conceptUri like 'http://data.europa.eu/esco/skill/UUID'."""
+    return concept_uri.rsplit("/", 1)[-1]
 
+
+def load_csv(path: str, language: str | None = None) -> tuple[dict, dict]:
+    """Parse an ESCO skills CSV. Returns (skills_dict, labels_dict)."""
+    lang = language or parse_language_from_filename(path) or "en"
     skills = {}
-    print("Downloading skills from ESCO API ...")
+    labels = {}
 
-    for lang in LANGUAGES:
-        offset = 0
-        limit = 100
-        lang_count = 0
-        while True:
-            url = ESCO_SKILLS_URL.format(lang=lang, offset=offset, limit=limit)
-            try:
-                resp = httpx.get(url, timeout=30)
-                resp.raise_for_status()
-                data = resp.json()
-            except Exception as e:
-                print(f"  Error fetching {lang} offset={offset}: {e}")
-                break
-
-            items = data.get("_embedded", {}).get("results", [])
-            if not items:
-                break
-
-            for item in items:
-                uri = item.get("uri", "")
-                title = item.get("title", "")
-                if not uri or not title:
-                    continue
-
-                if uri not in skills:
-                    skills[uri] = {
-                        "uri": uri,
-                        "preferred_label_en": "",
-                        "skill_type": item.get("skillType", "skill"),
-                        "labels": {},
-                    }
-
-                skills[uri]["labels"].setdefault(lang, set()).add(title)
-                if lang == "en":
-                    skills[uri]["preferred_label_en"] = title
-
-                # Also add alternative labels
-                for alt in item.get("alternativeLabel", {}).get(lang, []):
-                    if alt:
-                        skills[uri]["labels"].setdefault(lang, set()).add(alt)
-
-                lang_count += 1
-
-            offset += limit
-            if offset >= data.get("total", 0):
-                break
-
-        print(f"  {lang}: {lang_count} labels")
-
-    print(f"  Total skills: {len(skills)}")
-    return list(skills.values())
-
-
-def load_from_csv(csv_path: str) -> list[dict]:
-    """Load skills from a local CSV file (ESCO download format)."""
-    print(f"Loading skills from {csv_path} ...")
-    skills = {}
-    with open(csv_path, encoding="utf-8") as f:
+    with open(path, encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
-            uri = row.get("conceptUri", row.get("uri", ""))
-            label = row.get("preferredLabel", row.get("label", ""))
-            lang = row.get("language", "en")
-            skill_type = row.get("skillType", "skill")
-
-            if not uri or not label:
+            raw_uri = row.get("conceptUri", "").strip()
+            if not raw_uri:
                 continue
+            uri = extract_uuid(raw_uri)
+            if not uri:
+                continue
+
+            preferred = row.get("preferredLabel", "").strip()
+            skill_type = row.get("skillType", "skill/competence").strip()
+            alt_labels_raw = row.get("altLabels", "")
 
             if uri not in skills:
                 skills[uri] = {
                     "uri": uri,
-                    "preferred_label_en": "",
+                    "preferred_label_en": preferred if lang == "en" else "",
                     "skill_type": skill_type,
-                    "labels": {},
                 }
+            elif lang == "en" and preferred:
+                skills[uri]["preferred_label_en"] = preferred
 
-            skills[uri]["labels"].setdefault(lang, set()).add(label)
-            if lang == "en" and not skills[uri]["preferred_label_en"]:
-                skills[uri]["preferred_label_en"] = label
+            # Add preferred label (skip overly long labels — they cause false matches)
+            if preferred and len(preferred) <= 60:
+                key = (uri, lang, preferred)
+                labels[key] = True
 
-    print(f"  {len(skills)} skills loaded")
-    return list(skills.values())
+            # Add alternative labels (newline-separated in ESCO CSV)
+            if alt_labels_raw:
+                for alt in alt_labels_raw.split("\n"):
+                    alt = alt.strip()
+                    if alt and len(alt) <= 60:
+                        key = (uri, lang, alt)
+                        labels[key] = True
+
+    return skills, labels
 
 
-def seed_database(skills: list[dict]) -> None:
-    """Insert skills into Postgres."""
+def main():
+    parser = argparse.ArgumentParser(description="Seed skill taxonomy from ESCO CSV files")
+    parser.add_argument("--csv", nargs="*", help="One or more ESCO CSV files (e.g. skills_en.csv skills_es.csv)")
+    parser.add_argument("--dir", default=None, help="Directory containing skills_*.csv files")
+    parser.add_argument("--clear", action="store_true", default=True, help="Clear existing data before seeding (default: true)")
+    args = parser.parse_args()
+
+    # Collect CSV files
+    csv_files = []
+    if args.dir:
+        csv_files = sorted(glob.glob(os.path.join(args.dir, "skills_*.csv")))
+    if args.csv:
+        csv_files.extend(args.csv)
+
+    if not csv_files:
+        print("ERROR: no CSV files specified.")
+        print("Download from: https://esco.ec.europa.eu/en/use-esco/download")
+        print("Usage: python sql/seed_skills.py --csv data/esco/skills_en.csv")
+        return
+
+    # Parse all CSVs
+    all_skills = {}
+    all_labels = {}
+    for path in csv_files:
+        lang = parse_language_from_filename(path)
+        print(f"Parsing {path} (lang={lang}) ...")
+        skills, labels = load_csv(path, lang)
+        all_skills.update(skills)
+        all_labels.update(labels)
+        print(f"  {len(skills)} skills, {len(labels)} labels")
+
+    # Ensure all skills have an English preferred label (fallback to first available)
+    for uri, skill in all_skills.items():
+        if not skill["preferred_label_en"]:
+            for key in all_labels:
+                if key[0] == uri:
+                    skill["preferred_label_en"] = key[2]
+                    break
+
+    print(f"\nTotal: {len(all_skills)} unique skills, {len(all_labels)} labels across {len(csv_files)} files")
+
+    # Insert into database
     from sqlalchemy import text
     from app.db.session import SessionLocal
 
     db = SessionLocal()
     try:
-        # Clear existing data
-        db.execute(text("DELETE FROM skill_labels"))
-        db.execute(text("DELETE FROM skills"))
-        db.commit()
+        if args.clear:
+            print("Clearing existing skill data ...")
+            db.execute(text("DELETE FROM skill_labels"))
+            db.execute(text("DELETE FROM skills"))
+            db.commit()
 
-        # Insert skills
-        skill_count = 0
-        label_count = 0
-        for skill in skills:
-            if not skill.get("preferred_label_en"):
-                # Use first available label as fallback
-                for labels in skill["labels"].values():
-                    if labels:
-                        skill["preferred_label_en"] = next(iter(labels))
-                        break
-
+        print("Inserting skills ...")
+        count = 0
+        for skill in all_skills.values():
             db.execute(
                 text("INSERT INTO skills (uri, preferred_label_en, skill_type) VALUES (:uri, :label, :type) ON CONFLICT DO NOTHING"),
                 {"uri": skill["uri"], "label": skill["preferred_label_en"], "type": skill["skill_type"]},
             )
-            skill_count += 1
-
-            for lang, labels in skill.get("labels", {}).items():
-                for label in labels:
-                    db.execute(
-                        text("INSERT INTO skill_labels (skill_uri, language_code, label) VALUES (:uri, :lang, :label) ON CONFLICT DO NOTHING"),
-                        {"uri": skill["uri"], "lang": lang, "label": label},
-                    )
-                    label_count += 1
-
-            if skill_count % 1000 == 0:
+            count += 1
+            if count % 2000 == 0:
                 db.commit()
-                print(f"  ... {skill_count} skills, {label_count} labels inserted")
-
+                print(f"  ... {count} skills")
         db.commit()
-        print(f"\nDone. {skill_count} skills, {label_count} labels inserted")
+
+        print("Inserting labels ...")
+        label_count = 0
+        for (uri, lang, label) in all_labels:
+            db.execute(
+                text("INSERT INTO skill_labels (skill_uri, language_code, label) VALUES (:uri, :lang, :label) ON CONFLICT DO NOTHING"),
+                {"uri": uri, "lang": lang, "label": label},
+            )
+            label_count += 1
+            if label_count % 5000 == 0:
+                db.commit()
+                print(f"  ... {label_count} labels")
+        db.commit()
+
+        print(f"\nDone. {count} skills, {label_count} labels inserted")
     finally:
         db.close()
-
-
-def main():
-    parser = argparse.ArgumentParser(description="Seed skill taxonomy into Postgres")
-    parser.add_argument("--csv-path", default=None, help="Local ESCO CSV file (skips API download)")
-    args = parser.parse_args()
-
-    if args.csv_path:
-        skills = load_from_csv(args.csv_path)
-    else:
-        skills = download_esco_skills()
-
-    if not skills:
-        print("No skills to insert")
-        return
-
-    seed_database(skills)
 
 
 if __name__ == "__main__":

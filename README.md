@@ -340,6 +340,13 @@ psql $DATABASE_URL < sql/seed_categories.sql
 psql $DATABASE_URL < sql/seed_countries.sql
 psql $DATABASE_URL < sql/seed_source_countries.sql
 psql $DATABASE_URL -c "\copy category_map (original_category, category_id) FROM 'sql/category_map.csv' CSV HEADER"
+
+# Seed skill taxonomy (download ESCO CSVs from https://esco.ec.europa.eu/en/use-esco/download)
+# Select: Version=v1.2.1, Content=Classification, Format=CSV, one file per language
+python sql/seed_skills.py --dir data/esco/
+
+# Download spaCy model for SkillNER (English skill extraction)
+python -m spacy download en_core_web_lg
 ```
 
 ### Dependency scopes
@@ -367,6 +374,8 @@ All settings are read from environment variables (or `.env`).
 | `MAX_NEW_TOKENS` | `32` | Max tokens generated per title |
 | `MAX_INPUT_LENGTH` | `128` | Input truncation length |
 | `CATEGORIZER_MODEL_PATH` | — | Path to `categorizer.pkl` artifact |
+| `BIENCODER_MODEL_PATH` | — | Path to bi-encoder ONNX directory (e.g. `models/biencoder-onnx`) |
+| `EXTRACTOR_MODEL_PATH` | — | Path to extractor GGUF file (e.g. `models/extractor-gguf/model-Q4_K_M.gguf`) |
 | `VERIFIED_LABELLING` | `false` | Labelling UI: show only `verified=true` rows when `true` |
 
 **Sync worker only:**

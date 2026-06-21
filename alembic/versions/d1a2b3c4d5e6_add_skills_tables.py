@@ -17,14 +17,14 @@ depends_on = None
 def upgrade() -> None:
     op.create_table(
         "skills",
-        sa.Column("uri", sa.String(255), primary_key=True),
+        sa.Column("uri", sa.String(36), primary_key=True),
         sa.Column("preferred_label_en", sa.Text(), nullable=False),
         sa.Column("skill_type", sa.String(50)),
     )
 
     op.create_table(
         "skill_labels",
-        sa.Column("skill_uri", sa.String(255), sa.ForeignKey("skills.uri", ondelete="CASCADE"), primary_key=True),
+        sa.Column("skill_uri", sa.String(36), sa.ForeignKey("skills.uri", ondelete="CASCADE"), primary_key=True),
         sa.Column("language_code", sa.String(10), primary_key=True),
         sa.Column("label", sa.Text(), primary_key=True),
     )

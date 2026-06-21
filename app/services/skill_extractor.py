@@ -1,26 +1,25 @@
 import logging
 import re
-from collections import defaultdict
 
 from sqlalchemy import text
 
 logger = logging.getLogger("jobl.api.skill_extractor")
 
-_WORD_BOUNDARY_RE = re.compile(r"\b", re.UNICODE)
-
 
 class SkillExtractor:
-    """Extracts skills from text by matching against the skill taxonomy in Postgres.
-
-    Loads all skill labels into memory at init, grouped by language.
-    Matching is case-insensitive word-boundary aware.
+    """Hybrid skill extraction:
+    - English: SkillNER (NER-based, 60K EMSI skills) for richer extraction
+    - All languages: ESCO taxonomy matching from Postgres as baseline/fallback
     """
 
     def __init__(self, db_session_factory) -> None:
         self._ready = False
-        self._labels: dict[str, dict[str, str]] = {}  # lang -> {lowercase_label: preferred_label_en}
-        self._all_labels: dict[str, str] = {}  # lowercase_label -> preferred_label_en (fallback)
+        self._skillner = None
+        self._nlp = None
+        self._esco_labels: dict[str, dict[str, str]] = {}  # lang -> {lowercase_label: preferred_en}
+        self._esco_all: dict[str, str] = {}  # lowercase_label -> preferred_en
 
+        # Load ESCO labels from Postgres
         try:
             db = db_session_factory()
             try:
@@ -34,27 +33,39 @@ class SkillExtractor:
 
             for lang, label, preferred_en in rows:
                 lower = label.lower()
-                self._labels.setdefault(lang, {})[lower] = preferred_en
-                self._all_labels[lower] = preferred_en
+                self._esco_labels.setdefault(lang, {})[lower] = preferred_en
+                self._esco_all[lower] = preferred_en
 
-            # Sort by label length descending so longer matches take priority
-            for lang in self._labels:
-                self._labels[lang] = dict(
-                    sorted(self._labels[lang].items(), key=lambda x: -len(x[0]))
+            # Sort by label length descending (longer matches take priority)
+            for lang in self._esco_labels:
+                self._esco_labels[lang] = dict(
+                    sorted(self._esco_labels[lang].items(), key=lambda x: -len(x[0]))
                 )
-            self._all_labels = dict(
-                sorted(self._all_labels.items(), key=lambda x: -len(x[0]))
+            self._esco_all = dict(
+                sorted(self._esco_all.items(), key=lambda x: -len(x[0]))
             )
 
-            total_labels = sum(len(v) for v in self._labels.values())
-            self._ready = True
-            logger.info(
-                "skill extractor loaded: %d languages, %d labels",
-                len(self._labels), total_labels,
-            )
-        except Exception as exc:
-            logger.exception("failed to load skill taxonomy")
-            raise RuntimeError("failed to load skill taxonomy from database") from exc
+            total_labels = sum(len(v) for v in self._esco_labels.values())
+            logger.info("ESCO taxonomy loaded: %d languages, %d labels", len(self._esco_labels), total_labels)
+        except Exception:
+            logger.exception("failed to load ESCO taxonomy from database")
+
+        # Load SkillNER for English
+        try:
+            import spacy
+            from skillNer.general_params import SKILL_DB
+            from skillNer.skill_extractor_class import SkillExtractor as _SkillNER
+
+            nlp = spacy.load("en_core_web_lg")
+            self._skillner = _SkillNER(nlp, SKILL_DB)
+            self._nlp = nlp
+            logger.info("SkillNER loaded (en_core_web_lg + EMSI skill DB)")
+        except ImportError:
+            logger.warning("SkillNER or spaCy not available; English uses ESCO fallback only")
+        except OSError:
+            logger.warning("en_core_web_lg not installed; English uses ESCO fallback only. Install with: python -m spacy download en_core_web_lg")
+
+        self._ready = True
 
     def is_ready(self) -> bool:
         return self._ready
@@ -64,14 +75,31 @@ class SkillExtractor:
         if not text_input:
             return []
 
-        text_lower = text_input.lower()
-        found: dict[str, bool] = {}  # preferred_label_en -> True (preserves insertion order)
+        found: dict[str, bool] = {}
 
-        # Try language-specific labels first, then fall back to all labels
+        # For English: use SkillNER first (catches informal mentions)
+        if language in ("en", None) and self._skillner is not None:
+            try:
+                annotations = self._skillner.annotate(text_input)
+                for match in annotations.get("results", {}).get("full_matches", []):
+                    label = match.get("doc_node_value", "")
+                    if label:
+                        found[label] = True
+                for match in annotations.get("results", {}).get("ngram_scored", []):
+                    if match.get("score", 0) >= 0.5:
+                        label = match.get("doc_node_value", "")
+                        if label:
+                            found[label] = True
+            except Exception:
+                logger.debug("SkillNER extraction failed, falling back to ESCO", exc_info=True)
+
+        # ESCO dictionary matching (all languages, supplements SkillNER for English)
+        text_lower = text_input.lower()
+
         label_dicts = []
-        if language and language in self._labels:
-            label_dicts.append(self._labels[language])
-        label_dicts.append(self._all_labels)
+        if language and language in self._esco_labels:
+            label_dicts.append(self._esco_labels[language])
+        label_dicts.append(self._esco_all)
 
         for labels in label_dicts:
             for label_lower, preferred_en in labels.items():
@@ -79,10 +107,8 @@ class SkillExtractor:
                     continue
                 if len(label_lower) < 2:
                     continue
-                # Match with word boundaries for short labels to avoid false positives
                 if len(label_lower) <= 4:
-                    pattern = rf"\b{re.escape(label_lower)}\b"
-                    if re.search(pattern, text_lower):
+                    if re.search(rf"\b{re.escape(label_lower)}\b", text_lower):
                         found[preferred_en] = True
                 else:
                     if label_lower in text_lower:

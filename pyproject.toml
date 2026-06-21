@@ -24,6 +24,8 @@ dependencies = [
   "onnxruntime>=1.18.0",
   "llama-cpp-python>=0.2.80",
   "numpy>=1.26.0",
+  "skillNer>=1.0.3",
+  "spacy>=3.7.0",
 ]
 
 [project.optional-dependencies]
