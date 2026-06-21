@@ -225,12 +225,34 @@ def process(body: ProcessRequest, request: Request) -> ProcessResponse:
             category = CategoryOut(id=None, title=body.original_category)
         else:
             category = CategoryOut(id=22, title="Other")
+
+        # Embedding + skills for all languages
+        plain_text = BeautifulSoup(clean_result.html, "lxml").get_text(separator=" ")
+        embedding: list[float] | None = None
+        biencoder = getattr(request.app.state, "biencoder", None)
+        if biencoder and biencoder.is_ready():
+            try:
+                prefixed = f"[lang={lang}][country=XX][type=job] {body.title} — {plain_text[:2000]}"
+                embedding = biencoder.encode(prefixed)
+            except Exception:
+                logger.exception("biencoder.encode failed")
+
+        skills: list[str] | None = None
+        skill_extractor = getattr(request.app.state, "skill_extractor", None)
+        if skill_extractor and skill_extractor.is_ready():
+            try:
+                skills = skill_extractor.extract_skills(f"{body.title} {plain_text}", language=lang)
+            except Exception:
+                logger.exception("skill_extractor failed")
+
         return ProcessResponse(
             title_normalized=body.title,
             description_clean=clean_result.html,
             application_email=None,
             expiry_date=None,
             category=category,
+            embedding=embedding,
+            skills=skills,
         )
 
     # 3. Title — pass through original (normalizer removed)
