@@ -18,8 +18,9 @@ def upgrade() -> None:
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
 
     # Jobs: convert embedding TEXT → vector(1024), drop embedded_at, add skills
-    op.drop_column("jobs", "embedding")
-    op.drop_column("jobs", "embedded_at")
+    # CASCADE needed because jobs_active view depends on these columns
+    op.execute("ALTER TABLE jobs DROP COLUMN embedding CASCADE")
+    op.execute("ALTER TABLE jobs DROP COLUMN embedded_at CASCADE")
     op.execute("ALTER TABLE jobs ADD COLUMN embedding vector(1024)")
     op.add_column("jobs", sa.Column("skills", sa.Text(), nullable=True))
 
