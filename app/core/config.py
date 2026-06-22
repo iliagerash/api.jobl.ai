@@ -34,7 +34,7 @@ class Settings(BaseSettings):
     @field_validator("model_dir", "tokenizer_dir", "categorizer_model_path", "biencoder_model_path", mode="after")
     @classmethod
     def _resolve_path(cls, v: str | None) -> str | None:
-        if v is None:
+        if not v:
             return None
         p = Path(v)
         return str(p if p.is_absolute() else _PROJECT_ROOT / p)
