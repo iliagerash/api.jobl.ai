@@ -340,8 +340,8 @@ PostgreSQL. Schema managed by Alembic.
 **System prerequisites**:
 
 ```bash
-# Python build tools
-sudo apt install -y python3.12-venv python3.12-dev
+# Python build tools + LightGBM runtime dependency
+sudo apt install -y python3.12-venv python3.12-dev libgomp1
 
 # pgvector extension (required for embedding columns)
 sudo apt install -y postgresql-17-pgvector
