@@ -335,12 +335,18 @@ PostgreSQL. Schema managed by Alembic.
 
 ## Setup
 
-**Requirements**: Python 3.11+, PostgreSQL
+**Requirements**: Python 3.12, PostgreSQL 17+, Ubuntu 24.04 LTS
 
-**Build prerequisites** (needed for `llama-cpp-python` compilation):
+**System prerequisites**:
 
 ```bash
-sudo apt install -y cmake build-essential python3.12-dev
+# Python build tools
+sudo apt install -y python3.12-venv python3.12-dev
+
+# pgvector extension (required for embedding columns)
+sudo apt install -y postgresql-17-pgvector
+# Then enable it in the database (must be done as postgres superuser):
+sudo -u postgres psql -d jobl -c "CREATE EXTENSION IF NOT EXISTS vector"
 ```
 
 ```bash
