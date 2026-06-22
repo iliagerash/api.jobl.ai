@@ -346,7 +346,7 @@ sudo apt install -y cmake build-essential python3.12-dev
 ```bash
 cd api.jobl.ai
 python3 -m venv .venv
-source .venv/bin/activate
+    source .venv/bin/activate
 
 # Production install
 pip install -e .

@@ -35,5 +35,5 @@ class Resume(Base):
     published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     is_remote: Mapped[bool] = mapped_column(BOOLEAN, nullable=False, default=False, server_default="false")
     language_code: Mapped[str | None] = mapped_column(CHAR(2), nullable=True)
-    embedding = mapped_column(nullable=True)  # pgvector vector(1024)
+    embedding: Mapped[str | None] = mapped_column(TEXT, nullable=True)  # pgvector vector(1024), actual type set by migration
     skills: Mapped[str | None] = mapped_column(TEXT, nullable=True)  # JSON array

@@ -74,5 +74,5 @@ class Job(Base):
     # Local AI processing
     title_clean: Mapped[str | None] = mapped_column(TEXT, nullable=True)
     description_clean: Mapped[str | None] = mapped_column(TEXT, nullable=True)
-    embedding = mapped_column(nullable=True)  # pgvector vector(1024)
+    embedding: Mapped[str | None] = mapped_column(TEXT, nullable=True)  # pgvector vector(1024), actual type set by migration
     skills: Mapped[str | None] = mapped_column(TEXT, nullable=True)  # JSON array
