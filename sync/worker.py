@@ -585,7 +585,9 @@ class SyncWorker:
                 expires_at = EXCLUDED.expires_at,
                 is_remote = EXCLUDED.is_remote,
                 is_active = EXCLUDED.is_active,
-                category = COALESCE(EXCLUDED.category, jobs.category)
+                category = COALESCE(EXCLUDED.category, jobs.category),
+                embedding = COALESCE(jobs.embedding, EXCLUDED.embedding),
+                skills = COALESCE(jobs.skills, EXCLUDED.skills)
             """
         )
         with target_engine.begin() as conn:

@@ -75,4 +75,4 @@ class Job(Base):
     title_clean: Mapped[str | None] = mapped_column(TEXT, nullable=True)
     description_clean: Mapped[str | None] = mapped_column(TEXT, nullable=True)
     embedding = mapped_column(nullable=True)  # pgvector vector(1024)
-    embedded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    skills: Mapped[str | None] = mapped_column(TEXT, nullable=True)  # JSON array
