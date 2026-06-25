@@ -152,12 +152,9 @@ def _extract_application_email(text: str) -> str | None:
                 return m.group(0)
         start = max(0, m.start() - _CONTEXT_WINDOW)
         end = min(len(text), m.end() + _CONTEXT_WINDOW)
-        # Check exclusion keywords only in text BEFORE the email — EEO/disability
-        # boilerplate that follows a valid application email must not suppress it.
-        backward = _EMAIL_RE.sub("", text[start:m.end()])
-        if _EXCLUDE_KEYWORDS_RE.search(backward):
-            continue
         context = _EMAIL_RE.sub("", text[start:end])
+        if _EXCLUDE_KEYWORDS_RE.search(context):
+            continue
         if _APPLY_KEYWORDS_RE.search(context):
             return m.group(0)
     return None
