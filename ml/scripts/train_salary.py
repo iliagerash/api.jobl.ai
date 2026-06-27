@@ -108,7 +108,7 @@ def train_country(
     return {"boosters": boosters, "metrics": results}
 
 
-def tune_country(train_df: pd.DataFrame, test_df: pd.DataFrame, country_code: str, n_trials: int) -> dict:
+def tune_country(train_df: pd.DataFrame, test_df: pd.DataFrame, country_code: str, n_trials: int, gpu: bool = False) -> dict:
     """Tune hyperparameters with Optuna for one country."""
     import optuna
     optuna.logging.set_verbosity(optuna.logging.WARNING)
@@ -140,6 +140,8 @@ def tune_country(train_df: pd.DataFrame, test_df: pd.DataFrame, country_code: st
             "n_jobs": -1,
             "verbosity": -1,
         }
+        if gpu:
+            params["device"] = "gpu"
 
         booster = lgb.train(
             params,
@@ -156,8 +158,7 @@ def tune_country(train_df: pd.DataFrame, test_df: pd.DataFrame, country_code: st
         return float(np.mean(np.abs(preds - y_test)))
 
     def print_progress(study, trial):
-        if (trial.number + 1) % 5 == 0 or trial.number == 0:
-            print(f"    trial {trial.number + 1}/{n_trials}  MAE={trial.value:,.0f}  best={study.best_value:,.0f}")
+        print(f"    trial {trial.number + 1}/{n_trials}  MAE={trial.value:,.0f}  best={study.best_value:,.0f}", flush=True)
 
     study = optuna.create_study(direction="minimize")
     study.optimize(objective, n_trials=n_trials, callbacks=[print_progress])
@@ -177,6 +178,7 @@ def main() -> None:
     parser.add_argument("--early-stopping", type=int, default=50)
     parser.add_argument("--tune", action="store_true", help="Run Optuna hyperparameter search")
     parser.add_argument("--tune-trials", type=int, default=50)
+    parser.add_argument("--gpu", action="store_true", help="Use GPU for LightGBM training")
     args = parser.parse_args()
 
     os.makedirs(args.output_dir, exist_ok=True)
@@ -205,9 +207,12 @@ def main() -> None:
 
         if args.tune:
             print(f"  Tuning ({args.tune_trials} trials) ...")
-            params = tune_country(cc_train, cc_test, cc, args.tune_trials)
+            params = tune_country(cc_train, cc_test, cc, args.tune_trials, gpu=args.gpu)
         else:
             params = DEFAULT_PARAMS.copy()
+
+        if args.gpu:
+            params["device"] = "gpu"
 
         result = train_country(cc_train, cc_test, cc, params, args.n_rounds, args.early_stopping)
 
