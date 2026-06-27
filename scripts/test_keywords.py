@@ -37,7 +37,7 @@ def build_keyword_text(title: str, language_code: str) -> str:
 
 def main():
     parser = argparse.ArgumentParser()
-    parser.add_argument("--biencoder-path", default="models/biencoder")
+    parser.add_argument("--biencoder-path", default="models/biencoder-onnx")
     parser.add_argument("--top-k", type=int, default=5)
     args = parser.parse_args()
 
