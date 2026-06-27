@@ -70,6 +70,11 @@ class Job(Base):
 
     # Source category (original value from source DB)
     category: Mapped[str | None] = mapped_column(VARCHAR(255), nullable=True)
+    category_id: Mapped[int | None] = mapped_column(SMALLINT, nullable=True)
+
+    # Destination (target job board)
+    destination: Mapped[str | None] = mapped_column(VARCHAR(100), nullable=True)
+    destination_job_id: Mapped[int | None] = mapped_column(BIGINT, nullable=True)
 
     # Local AI processing
     title_clean: Mapped[str | None] = mapped_column(TEXT, nullable=True)
