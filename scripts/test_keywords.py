@@ -113,7 +113,7 @@ def main():
         print("-" * 60)
         results = db.execute(text("""
             WITH canonical_keywords AS (
-                SELECT id, title, language_code FROM keywords WHERE canonical_id = 1
+                SELECT id, title, language_code, embedding FROM keywords WHERE canonical_id = 1
             )
             SELECT DISTINCT ON (j.id)
                 j.id, j.title, j.language_code, j.category,
