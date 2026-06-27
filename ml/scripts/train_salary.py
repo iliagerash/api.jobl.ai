@@ -122,13 +122,14 @@ def tune_country(train_df: pd.DataFrame, test_df: pd.DataFrame, country_code: st
         X_train[col] = X_train[col].astype("category")
         X_test[col] = X_test[col].astype("category")
 
-    train_data = lgb.Dataset(X_train, label=y_train, categorical_feature=CAT_FEATURES, free_raw_data=False)
+    train_data = lgb.Dataset(X_train, label=y_train, categorical_feature=CAT_FEATURES, free_raw_data=False, params={"feature_pre_filter": False})
     val_data = lgb.Dataset(X_test, label=y_test, reference=train_data, free_raw_data=False)
 
     def objective(trial):
         params = {
             "objective": "regression",
             "metric": "mae",
+            "feature_pre_filter": False,
             "num_leaves": trial.suggest_int("num_leaves", 31, 127),
             "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.1, log=True),
             "feature_fraction": trial.suggest_float("feature_fraction", 0.6, 1.0),
