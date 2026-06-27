@@ -68,7 +68,7 @@ def step_export(db_url: str, output_dir: str) -> None:
         WHERE embedding IS NOT NULL
           AND category_id IS NOT NULL
           AND title IS NOT NULL
-          AND language_code IS NOT NULL
+          AND language_code IN ('en', 'fr')
         ORDER BY title, language_code, category_id, id DESC
     """)
 
