@@ -97,6 +97,9 @@ class SyncWorker:
                         continue
 
                     has_job_category_column = self._column_exists(source_engine, db_name, "job", "category")
+                    has_job_category_id_column = self._column_exists(source_engine, db_name, "job", "category_id")
+                    has_job_destination_column = self._column_exists(source_engine, db_name, "job", "destination")
+                    has_job_destination_job_id_column = self._column_exists(source_engine, db_name, "job", "destination_job_id")
 
                     prefer_currency_from_job = self.currency_in_job_enabled(config)
                     has_job_salary_currency_column = self._job_has_salary_currency_column(source_engine, db_name)
@@ -154,6 +157,9 @@ class SyncWorker:
                             region_city_column=region_city_column,
                             use_region_join=use_region_join,
                             has_category_column=has_job_category_column,
+                            has_category_id_column=has_job_category_id_column,
+                            has_destination_column=has_job_destination_column,
+                            has_destination_job_id_column=has_job_destination_job_id_column,
                             last_job_id=last_job_id,
                             skip_export_filter=resync,
                         )
@@ -173,6 +179,9 @@ class SyncWorker:
                             use_country_code_from_city=use_country_code_from_city,
                             use_currency_from_job=use_currency_from_job,
                             has_category_column=has_job_category_column,
+                            has_category_id_column=has_job_category_id_column,
+                            has_destination_column=has_job_destination_column,
+                            has_destination_job_id_column=has_job_destination_job_id_column,
                         )
 
                         self._upsert_jobs(target_engine=target_engine, payload=jobs_payload)
@@ -369,12 +378,18 @@ class SyncWorker:
         region_city_column: str,
         use_region_join: bool,
         has_category_column: bool,
+        has_category_id_column: bool,
+        has_destination_column: bool,
+        has_destination_job_id_column: bool,
         last_job_id: int,
         skip_export_filter: bool = False,
     ) -> list[dict[str, object | None]]:
         country_code_sql = "c.country_code AS city_country_code," if use_country_code_from_city else "NULL AS city_country_code,"
         currency_sql = "j.salary_currency AS job_salary_currency," if use_currency_from_job else "NULL AS job_salary_currency,"
         category_sql = "j.category AS job_category," if has_category_column else "NULL AS job_category,"
+        category_id_sql = "j.category_id AS job_category_id," if has_category_id_column else "NULL AS job_category_id,"
+        destination_sql = "j.destination AS job_destination," if has_destination_column else "NULL AS job_destination,"
+        destination_job_id_sql = "j.destination_job_id AS job_destination_job_id," if has_destination_job_id_column else "NULL AS job_destination_job_id,"
         export_filter_sql = "" if skip_export_filter else """
               AND NOT EXISTS (
                 SELECT 1
@@ -405,6 +420,9 @@ class SyncWorker:
                 {country_code_sql}
                 {currency_sql}
                 {category_sql}
+                {category_id_sql}
+                {destination_sql}
+                {destination_job_id_sql}
                 j.salary_min,
                 j.salary_max,
                 j.salary_period,
@@ -472,6 +490,9 @@ class SyncWorker:
         use_country_code_from_city: bool,
         use_currency_from_job: bool,
         has_category_column: bool = False,
+        has_category_id_column: bool = False,
+        has_destination_column: bool = False,
+        has_destination_job_id_column: bool = False,
     ) -> list[dict[str, object | None]]:
         payload: list[dict[str, object | None]] = []
         now = datetime.now(timezone.utc)
@@ -523,6 +544,9 @@ class SyncWorker:
                     "is_remote": self._is_remote(row.get("subcategory")),
                     "is_active": is_active,
                     "category": str(row["job_category"]).strip() or None if row.get("job_category") else None,
+                    "category_id": int(row["job_category_id"]) if row.get("job_category_id") and int(row["job_category_id"]) > 0 else None,
+                    "destination": str(row["job_destination"]).strip() or None if row.get("job_destination") else None,
+                    "destination_job_id": int(row["job_destination_job_id"]) if row.get("job_destination_job_id") else None,
                 }
             )
         return payload
@@ -546,7 +570,7 @@ class SyncWorker:
                 salary_min, salary_max, salary_period, salary_currency,
                 contract, experience, education,
                 published_at, expires_at, is_remote, is_active,
-                category
+                category, category_id, destination, destination_job_id
             ) VALUES (
                 :source_db, :source_job_id, :site_id, :external_id,
                 :title, :description, :company_id, :company_name, :site_title, :url,
@@ -555,7 +579,7 @@ class SyncWorker:
                 :salary_min, :salary_max, :salary_period, :salary_currency,
                 :contract, :experience, :education,
                 :published_at, :expires_at, :is_remote, :is_active,
-                :category
+                :category, :category_id, :destination, :destination_job_id
             )
             ON CONFLICT ON CONSTRAINT uq_jobs_source_external
             DO UPDATE SET
@@ -586,6 +610,9 @@ class SyncWorker:
                 is_remote = EXCLUDED.is_remote,
                 is_active = EXCLUDED.is_active,
                 category = COALESCE(EXCLUDED.category, jobs.category),
+                category_id = COALESCE(EXCLUDED.category_id, jobs.category_id),
+                destination = COALESCE(EXCLUDED.destination, jobs.destination),
+                destination_job_id = COALESCE(EXCLUDED.destination_job_id, jobs.destination_job_id),
                 embedding = COALESCE(jobs.embedding, EXCLUDED.embedding),
                 skills = COALESCE(jobs.skills, EXCLUDED.skills)
             """
