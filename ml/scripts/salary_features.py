@@ -37,7 +37,6 @@ COUNTRY_CURRENCY = {
     "SG": "SGD",
     "GB": "GBP",
     "US": "USD",
-    "ZA": "ZAR",
 }
 
 # Countries where salary is typically stated monthly
@@ -128,7 +127,7 @@ def main() -> None:
 
     print("Loading jobs with stated salary ...")
     query = text("""
-        SELECT title, country_code, city_title, category_id,
+        SELECT title, country_code, city_title, region_title, category_id,
                is_remote, contract, description,
                salary_min, salary_max, salary_period,
                published_at
@@ -138,7 +137,7 @@ def main() -> None:
           AND salary_min > 0
           AND salary_max > 0
           AND salary_max >= salary_min
-          AND country_code IN ('AU', 'CA', 'SG', 'GB', 'US', 'ZA')
+          AND country_code IN ('AU', 'CA', 'SG', 'GB', 'US')
           AND category_id IS NOT NULL
           AND published_at IS NOT NULL
         ORDER BY published_at
@@ -175,7 +174,6 @@ def main() -> None:
         "GB": 10000,  # yearly GBP
         "US": 15000,  # yearly USD
         "SG": 1000,   # monthly SGD
-        "ZA": 5000,   # monthly ZAR
     }
     before = len(df)
     df = df[df.apply(lambda r: r["target_salary_min"] >= SALARY_FLOOR.get(r["country_code"], 0), axis=1)]
@@ -224,7 +222,7 @@ def main() -> None:
     print("Target encoding ...")
     encodings = {}
 
-    for col in ["title", "city_title"]:
+    for col in ["title", "city_title", "region_title"]:
         train_df[f"{col}_encoded"] = target_encode_cv(train_df, col, target_col)
         mapping = target_encode_mapping(train_df, col, target_col)
         global_mean = mapping.pop("__global_mean__")
@@ -242,11 +240,11 @@ def main() -> None:
 
     # Select final columns
     feature_cols = [
-        "title_encoded", "country", "city_title_encoded", "category_encoded",
-        "work_mode", "contract_type", "description_word_count",
+        "title_encoded", "country", "city_title_encoded", "region_title_encoded",
+        "category_encoded", "work_mode", "contract_type", "description_word_count",
     ]
     target_cols = ["target_salary_min", "target_salary_max"]
-    meta_cols = ["country_code", "title", "city_title", "published_at"]
+    meta_cols = ["country_code", "title", "city_title", "region_title", "published_at"]
 
     train_out = train_df[feature_cols + target_cols + meta_cols].copy()
     test_out = test_df[feature_cols + target_cols + meta_cols].copy()

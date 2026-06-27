@@ -29,8 +29,8 @@ DATA_DIR = "ml/data/salary"
 OUTPUT_DIR = "models"
 
 FEATURE_COLS = [
-    "title_encoded", "city_title_encoded", "category_encoded",
-    "work_mode", "contract_type", "description_word_count",
+    "title_encoded", "city_title_encoded", "region_title_encoded",
+    "category_encoded", "work_mode", "contract_type", "description_word_count",
 ]
 
 CAT_FEATURES = ["work_mode", "contract_type"]
