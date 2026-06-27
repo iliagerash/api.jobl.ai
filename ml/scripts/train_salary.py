@@ -155,8 +155,12 @@ def tune_country(train_df: pd.DataFrame, test_df: pd.DataFrame, country_code: st
         preds = booster.predict(X_test)
         return float(np.mean(np.abs(preds - y_test)))
 
+    def print_progress(study, trial):
+        if (trial.number + 1) % 5 == 0 or trial.number == 0:
+            print(f"    trial {trial.number + 1}/{n_trials}  MAE={trial.value:,.0f}  best={study.best_value:,.0f}")
+
     study = optuna.create_study(direction="minimize")
-    study.optimize(objective, n_trials=n_trials)
+    study.optimize(objective, n_trials=n_trials, callbacks=[print_progress])
 
     print(f"    Best MAE: {study.best_value:,.0f}")
     print(f"    Best params: {study.best_params}")
