@@ -167,6 +167,20 @@ def main() -> None:
     df["target_salary_min"] = normalized[0]
     df["target_salary_max"] = normalized[1]
 
+    # Filter mislabeled salary periods (e.g. hourly rates labeled as yearly)
+    # Minimum reasonable normalized salary per country
+    SALARY_FLOOR = {
+        "AU": 15000,  # yearly AUD
+        "CA": 15000,  # yearly CAD
+        "GB": 10000,  # yearly GBP
+        "US": 15000,  # yearly USD
+        "SG": 1000,   # monthly SGD
+        "ZA": 5000,   # monthly ZAR
+    }
+    before = len(df)
+    df = df[df.apply(lambda r: r["target_salary_min"] >= SALARY_FLOOR.get(r["country_code"], 0), axis=1)]
+    print(f"  Salary floor filter: {before:,} → {len(df):,} ({before - len(df)} likely mislabeled periods removed)")
+
     # Filter outliers (per country)
     before = len(df)
     filtered = []
