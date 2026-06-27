@@ -204,13 +204,21 @@ def main() -> None:
     df["country"] = df["country_code"].astype("category")
     df["category_id"] = df["category_id"].astype(int)
 
-    # 80/20 time-based split
-    split_idx = int(len(df) * 0.8)
-    train_df = df.iloc[:split_idx].copy()
-    test_df = df.iloc[split_idx:].copy()
+    # 80/20 time-based split per country
+    train_parts = []
+    test_parts = []
+    for cc in df["country_code"].unique():
+        cc_df = df[df["country_code"] == cc].sort_values("published_at")
+        split_idx = int(len(cc_df) * 0.8)
+        train_parts.append(cc_df.iloc[:split_idx])
+        test_parts.append(cc_df.iloc[split_idx:])
+    train_df = pd.concat(train_parts).copy()
+    test_df = pd.concat(test_parts).copy()
     print(f"  Train: {len(train_df):,} | Test: {len(test_df):,}")
-    print(f"  Train period: {train_df['published_at'].min()} to {train_df['published_at'].max()}")
-    print(f"  Test period:  {test_df['published_at'].min()} to {test_df['published_at'].max()}")
+    for cc in sorted(df["country_code"].unique()):
+        cc_train = train_df[train_df["country_code"] == cc]
+        cc_test = test_df[test_df["country_code"] == cc]
+        print(f"    {cc}: train={len(cc_train):,}  test={len(cc_test):,}")
 
     # Target encoding (CV on train, mapping applied to test)
     print("Target encoding ...")
