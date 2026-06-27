@@ -22,7 +22,7 @@ from sqlalchemy.engine import URL
 
 load_dotenv()
 
-COUNTRIES = {"AU", "CA", "NZ", "SG", "ZA", "UK", "US"}
+COUNTRIES = {"AU", "CA", "GB", "NZ", "SG", "ZA", "US"}
 
 
 def env(name: str, default: str | None = None) -> str:
