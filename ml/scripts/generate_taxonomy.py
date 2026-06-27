@@ -84,7 +84,14 @@ def step_export(db_url: str, output_dir: str) -> None:
                 "language_code": row.language_code,
                 "category_id": int(row.category_id),
             })
-            vectors.append(np.frombuffer(row.embedding, dtype=np.float32) if isinstance(row.embedding, (bytes, memoryview)) else np.array(row.embedding, dtype=np.float32))
+            emb = row.embedding
+            if isinstance(emb, str):
+                emb = np.array([float(x) for x in emb.strip("[]").split(",")], dtype=np.float32)
+            elif isinstance(emb, (bytes, memoryview)):
+                emb = np.frombuffer(emb, dtype=np.float32)
+            else:
+                emb = np.array(emb, dtype=np.float32)
+            vectors.append(emb)
 
             if (i + 1) % HEARTBEAT_EVERY == 0:
                 elapsed = time.time() - start
