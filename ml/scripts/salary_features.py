@@ -44,19 +44,19 @@ COUNTRY_CURRENCY = {
 MONTHLY_COUNTRIES = {"SG", "ZA"}
 
 PERIOD_MULTIPLIERS_TO_YEARLY = {
-    "hourly": 2080,
-    "daily": 260,
-    "weekly": 52,
-    "monthly": 12,
-    "yearly": 1,
+    "hour": 2080, "hourly": 2080,
+    "day": 260, "daily": 260,
+    "week": 52, "weekly": 52,
+    "month": 12, "monthly": 12,
+    "year": 1, "yearly": 1,
 }
 
 PERIOD_MULTIPLIERS_TO_MONTHLY = {
-    "hourly": 173.33,
-    "daily": 21.67,
-    "weekly": 4.33,
-    "monthly": 1,
-    "yearly": 1 / 12,
+    "hour": 173.33, "hourly": 173.33,
+    "day": 21.67, "daily": 21.67,
+    "week": 4.33, "weekly": 4.33,
+    "month": 1, "monthly": 1,
+    "year": 1 / 12, "yearly": 1 / 12,
 }
 
 
