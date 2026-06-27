@@ -112,20 +112,18 @@ def main():
         print("\nCross-language test: jobs matching canonical_id=1 (Software Developer / Développeur Logiciel)")
         print("-" * 60)
         results = db.execute(text("""
-            WITH canonical_keywords AS (
-                SELECT id, title, language_code, embedding FROM keywords WHERE canonical_id = 1
+            WITH per_lang AS (
+                SELECT j.id, j.title, j.language_code, j.category,
+                       j.embedding <=> k.embedding AS distance,
+                       k.title AS matched_keyword
+                FROM jobs j
+                JOIN keywords k ON k.canonical_id = 1 AND k.language_code = j.language_code
+                WHERE j.embedding IS NOT NULL
+                ORDER BY j.embedding <=> k.embedding
+                LIMIT :per_lang_k
             )
-            SELECT DISTINCT ON (j.id)
-                j.id, j.title, j.language_code, j.category,
-                j.embedding <=> k.embedding AS distance,
-                k.title AS matched_keyword
-            FROM jobs j
-            CROSS JOIN canonical_keywords k
-            WHERE j.embedding IS NOT NULL
-              AND j.language_code = k.language_code
-            ORDER BY j.id, j.embedding <=> k.embedding
-            LIMIT :top_k
-        """), {"top_k": args.top_k * 2}).fetchall()
+            SELECT * FROM per_lang ORDER BY distance
+        """), {"per_lang_k": args.top_k}).fetchall()
 
         for r in results:
             print(f"  dist={r.distance:.4f}  [{r.language_code}] {r.title}  → matched: {r.matched_keyword}")
