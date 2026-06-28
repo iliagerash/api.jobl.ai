@@ -72,11 +72,23 @@ class SalaryPredictor:
             "description_word_count": word_count,
         }
 
+        feature_values = [
+            features["title_encoded"],
+            features["city_title_encoded"],
+            features["region_title_encoded"],
+            features["category_encoded"],
+            features["country"],
+            features["work_mode"],
+            features["contract_type"],
+            features["description_word_count"],
+        ]
+
         import pandas as pd
-        df = pd.DataFrame([features])
-        df["country"] = df["country"].astype("category")
-        df["work_mode"] = df["work_mode"].astype("category")
-        df["contract_type"] = df["contract_type"].astype("category")
+        df = pd.DataFrame([feature_values], columns=[
+            "title_encoded", "city_title_encoded", "region_title_encoded",
+            "category_encoded", "country", "work_mode", "contract_type",
+            "description_word_count",
+        ])
 
         salary_min = float(model["min"].predict(df)[0])
         salary_max = float(model["max"].predict(df)[0])
