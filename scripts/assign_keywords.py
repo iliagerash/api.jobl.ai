@@ -76,6 +76,8 @@ def main():
                 WHERE j.embedding IS NOT NULL
                   AND j.category_id IS NOT NULL
                   AND j.language_code IN ('en', 'fr')
+                  AND j.expires_at > NOW()
+                  AND j.country_code IN ('AU', 'CA', 'GB', 'NZ', 'SG', 'US')
                   AND j.id > :last_id
                   AND NOT EXISTS (SELECT 1 FROM job_keywords jk WHERE jk.job_id = j.id)
                   {country_filter}
