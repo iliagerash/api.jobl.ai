@@ -33,6 +33,7 @@ from google.oauth2 import service_account
 OUTPUT_DIR = "data/ga_exports"
 
 PROPERTIES = {
+    # Workus account
     "au.workus.org": {"start_date": "2026-04-06"},
     "ca.workus.org": {"start_date": "2026-04-06"},
     "nz.workus.org": {"start_date": "2026-04-06"},
@@ -40,6 +41,14 @@ PROPERTIES = {
     "uk.workus.org": {"start_date": "2026-04-06"},
     "za.workus.org": {"start_date": "2026-04-06"},
     "workus.org": {"start_date": "2026-06-10"},
+    # JobRadars account
+    "jobradars.com": {"start_date": "2026-01-01"},
+    "australia.jobradars.com": {"start_date": "2026-01-01"},
+    "canada.jobradars.com": {"start_date": "2026-01-01"},
+    "newzealand.jobradars.com": {"start_date": "2026-01-01"},
+    "singapore.jobradars.com": {"start_date": "2026-01-01"},
+    "unitedkingdom.jobradars.com": {"start_date": "2026-01-01"},
+    "jobspire.co.za": {"start_date": "2026-01-01"},
 }
 
 SCOPES = [
