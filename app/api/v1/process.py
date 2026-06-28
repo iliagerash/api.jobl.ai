@@ -175,6 +175,8 @@ class ProcessRequest(BaseModel):
     salary_max: float | None = None
     salary_period: str | None = None
     destination: str | None = None
+    category_id: int | None = None
+    embedding: list[float] | None = None
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -322,26 +324,30 @@ def process(body: ProcessRequest, request: Request) -> ProcessResponse:
     if application_email:
         description_clean = description_clean.replace(application_email, "***email_hidden***")
 
-    # 6. Categorize
+    # 6. Categorize (skip if category_id provided)
     category: CategoryOut | None = None
-    categorizer = getattr(request.app.state, "categorizer", None)
-    if categorizer and categorizer.is_ready():
-        try:
-            desc_plain = BeautifulSoup(description_clean, "lxml").get_text()
-            cat = categorizer.predict(body.title, desc_plain)
-            category = CategoryOut(id=cat["id"], title=cat["title"], confidence=cat.get("confidence"))
-        except Exception:
-            logger.exception("categorizer.predict failed")
+    if body.category_id:
+        category = CategoryOut(id=body.category_id, title="", confidence=None)
+    else:
+        categorizer = getattr(request.app.state, "categorizer", None)
+        if categorizer and categorizer.is_ready():
+            try:
+                desc_plain = BeautifulSoup(description_clean, "lxml").get_text()
+                cat = categorizer.predict(body.title, desc_plain)
+                category = CategoryOut(id=cat["id"], title=cat["title"], confidence=cat.get("confidence"))
+            except Exception:
+                logger.exception("categorizer.predict failed")
 
-    # 7. Embedding (bi-encoder)
-    embedding: list[float] | None = None
-    biencoder = getattr(request.app.state, "biencoder", None)
-    if biencoder and biencoder.is_ready():
-        try:
-            prefixed = f"[lang={lang}][country=XX][type=job] {body.title} — {plain_text[:2000]}"
-            embedding = biencoder.encode(prefixed)
-        except Exception:
-            logger.exception("biencoder.encode failed")
+    # 7. Embedding (skip if provided in request)
+    embedding: list[float] | None = body.embedding
+    if not embedding:
+        biencoder = getattr(request.app.state, "biencoder", None)
+        if biencoder and biencoder.is_ready():
+            try:
+                prefixed = f"[lang={lang}][country=XX][type=job] {body.title} — {plain_text[:2000]}"
+                embedding = biencoder.encode(prefixed)
+            except Exception:
+                logger.exception("biencoder.encode failed")
 
     # 8. Skills (ESCO taxonomy)
     skills: list[str] | None = None
