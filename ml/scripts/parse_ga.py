@@ -159,10 +159,11 @@ def main():
         suffixes=("_ga", "_jobl"),
     )
 
-    # Use jobl country_code if available, fall back to GA-derived
-    if "country_code_jobl" in merged.columns:
-        merged["country_code"] = merged["country_code_jobl"].fillna(merged["country_code_ga"])
-        merged.drop(columns=["country_code_ga", "country_code_jobl"], inplace=True)
+    # Country code from destination domain — authoritative for which market the job serves
+    merged["country_code"] = merged["destination"].map(DOMAIN_COUNTRY)
+    for col in ["country_code_ga", "country_code_jobl"]:
+        if col in merged.columns:
+            merged.drop(columns=[col], inplace=True)
 
     print(f"\nJoined: {len(merged):,} rows (GA ∩ jobl)")
 
