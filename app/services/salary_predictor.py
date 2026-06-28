@@ -24,11 +24,12 @@ class SalaryPredictor:
                     path = os.path.join(models_dir, filename)
                     with open(path, "rb") as f:
                         artifact = pickle.load(f)
+                    booster_min = lgb.Booster(model_str=artifact["boosters"]["target_salary_min"])
                     self._models[cc] = {
-                        "min": lgb.Booster(model_str=artifact["boosters"]["target_salary_min"]),
+                        "min": booster_min,
                         "max": lgb.Booster(model_str=artifact["boosters"]["target_salary_max"]),
                         "encodings": artifact["encodings"],
-                        "cat_values": artifact.get("cat_values", {}),
+                        "pandas_categorical": booster_min.dump_model().get("pandas_categorical", []),
                     }
             cat_path = os.path.join(models_dir, "salary_categories.json")
             if os.path.exists(cat_path):
@@ -94,8 +95,7 @@ class SalaryPredictor:
         }
         df = pd.DataFrame([row])
 
-        # Reconstruct pandas categoricals matching training
-        pandas_cat = model["min"].dump_model().get("pandas_categorical", [])
+        pandas_cat = model["pandas_categorical"]
         cat_cols = ["work_mode", "contract_type"]
         for i, col in enumerate(cat_cols):
             if i < len(pandas_cat):

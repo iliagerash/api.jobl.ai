@@ -50,6 +50,8 @@ class ProfitabilityPredictor:
             else:
                 self._cat_values = {}
 
+            self._pandas_categorical = self._classifier.dump_model().get("pandas_categorical", [])
+
             self._ready = True
             logger.info("profitability predictor loaded from %s", models_dir)
         except Exception as exc:
@@ -104,42 +106,41 @@ class ProfitabilityPredictor:
             "month_posted": month,
         }
 
-        cat_cols = {
-            "country": 5,
-            "destination_cat": 6,
-            "salary_period_cat": 10,
-            "work_mode": 11,
-            "contract_type": 12,
+        import pandas as pd
+
+        row = {
+            "title_encoded": features["title_encoded"],
+            "company_name_encoded": features["company_name_encoded"],
+            "city_title_encoded": features["city_title_encoded"],
+            "region_title_encoded": features["region_title_encoded"],
+            "category_encoded": features["category_encoded"],
+            "country": features["country"],
+            "destination_cat": features["destination_cat"],
+            "salary_present": features["salary_present"],
+            "salary_min": features["salary_min"],
+            "salary_max": features["salary_max"],
+            "salary_period_cat": features["salary_period_cat"],
+            "work_mode": features["work_mode"],
+            "contract_type": features["contract_type"],
+            "description_word_count": features["description_word_count"],
+            "city_population_tier": features["city_population_tier"],
+            "day_of_week_posted": features["day_of_week_posted"],
+            "month_posted": features["month_posted"],
         }
-        row = [
-            features["title_encoded"],
-            features["company_name_encoded"],
-            features["city_title_encoded"],
-            features["region_title_encoded"],
-            features["category_encoded"],
-            features["country"],
-            features["destination_cat"],
-            features["salary_present"],
-            features["salary_min"],
-            features["salary_max"],
-            features["salary_period_cat"],
-            features["work_mode"],
-            features["contract_type"],
-            features["description_word_count"],
-            features["city_population_tier"],
-            features["day_of_week_posted"],
-            features["month_posted"],
-        ]
-        for col, idx in cat_cols.items():
-            cats = self._cat_values.get(col, [])
-            val = row[idx]
-            row[idx] = cats.index(val) if val in cats else len(cats)
+        df = pd.DataFrame([row])
 
-        data = np.array([row], dtype=np.float64)
+        cat_cols = ["country", "destination_cat", "salary_period_cat", "work_mode", "contract_type"]
+        for i, col in enumerate(cat_cols):
+            if i < len(self._pandas_categorical):
+                cats = list(self._pandas_categorical[i])
+                val = df[col].iloc[0]
+                if val not in cats:
+                    cats.append(val)
+                df[col] = pd.Categorical(df[col], categories=cats)
 
-        p_revenue = float(self._classifier.predict(data)[0])
-        predicted_revenue = float(self._revenue_model.predict(data)[0])
-        predicted_rps = float(self._rps_model.predict(data)[0])
+        p_revenue = float(self._classifier.predict(df)[0])
+        predicted_revenue = float(self._revenue_model.predict(df)[0])
+        predicted_rps = float(self._rps_model.predict(df)[0])
 
         combined_revenue = p_revenue * max(0, predicted_revenue)
 
