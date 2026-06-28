@@ -150,9 +150,13 @@ def main():
             print(f"  {p['property_id']}  {p['display_name']}")
         return
 
-    # Discover property IDs by display name
+    # Discover property IDs by display name (strip common suffixes like " - GA4")
     all_props = list_properties(credentials)
-    prop_map = {p["display_name"]: p["property_id"] for p in all_props}
+    prop_map = {}
+    for p in all_props:
+        prop_map[p["display_name"]] = p["property_id"]
+        clean_name = p["display_name"].replace(" - GA4", "").strip()
+        prop_map[clean_name] = p["property_id"]
 
     if args.properties:
         target_names = {n.strip() for n in args.properties.split(",")}
