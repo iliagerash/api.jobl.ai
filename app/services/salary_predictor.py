@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import pickle
@@ -27,7 +28,15 @@ class SalaryPredictor:
                         "min": lgb.Booster(model_str=artifact["boosters"]["target_salary_min"]),
                         "max": lgb.Booster(model_str=artifact["boosters"]["target_salary_max"]),
                         "encodings": artifact["encodings"],
+                        "cat_values": artifact.get("cat_values", {}),
                     }
+            cat_path = os.path.join(models_dir, "salary_categories.json")
+            if os.path.exists(cat_path):
+                with open(cat_path) as f:
+                    self._cat_values = json.load(f)
+            else:
+                self._cat_values = {}
+
             if self._models:
                 self._ready = True
                 logger.info("salary predictor loaded: %s", sorted(self._models.keys()))
@@ -72,23 +81,14 @@ class SalaryPredictor:
             "description_word_count": word_count,
         }
 
-        feature_values = [
-            features["title_encoded"],
-            features["city_title_encoded"],
-            features["region_title_encoded"],
-            features["category_encoded"],
-            features["country"],
-            features["work_mode"],
-            features["contract_type"],
-            features["description_word_count"],
-        ]
-
         import pandas as pd
-        df = pd.DataFrame([feature_values], columns=[
-            "title_encoded", "city_title_encoded", "region_title_encoded",
-            "category_encoded", "country", "work_mode", "contract_type",
-            "description_word_count",
-        ])
+        df = pd.DataFrame([features])
+        for col in ["country", "work_mode", "contract_type"]:
+            cats = list(self._cat_values.get(col, []))
+            val = df[col].iloc[0]
+            if val not in cats:
+                cats.append(val)
+            df[col] = pd.Categorical(df[col], categories=cats)
 
         salary_min = float(model["min"].predict(df)[0])
         salary_max = float(model["max"].predict(df)[0])

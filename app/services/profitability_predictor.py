@@ -1,3 +1,4 @@
+import json
 import logging
 import os
 import pickle
@@ -41,6 +42,13 @@ class ProfitabilityPredictor:
             with open(rps_path, "rb") as f:
                 rps_artifact = pickle.load(f)
             self._rps_model = lgb.Booster(model_str=rps_artifact["booster"])
+
+            cat_path = os.path.join(models_dir, "profitability_categories.json")
+            if os.path.exists(cat_path):
+                with open(cat_path) as f:
+                    self._cat_values = json.load(f)
+            else:
+                self._cat_values = {}
 
             self._ready = True
             logger.info("profitability predictor loaded from %s", models_dir)
@@ -99,7 +107,11 @@ class ProfitabilityPredictor:
         import pandas as pd
         df = pd.DataFrame([features])
         for col in ["country", "destination_cat", "salary_period_cat", "work_mode", "contract_type"]:
-            df[col] = df[col].astype("category")
+            cats = list(self._cat_values.get(col, []))
+            val = df[col].iloc[0]
+            if val not in cats:
+                cats.append(val)
+            df[col] = pd.Categorical(df[col], categories=cats)
 
         p_revenue = float(self._classifier.predict(df)[0])
         predicted_revenue = float(self._revenue_model.predict(df)[0])

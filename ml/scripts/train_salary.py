@@ -64,6 +64,11 @@ def train_country(
         X_train[col] = X_train[col].astype("category")
         X_test[col] = X_test[col].astype("category")
 
+    # Save category values for inference
+    cat_values = {}
+    for col in CAT_FEATURES:
+        cat_values[col] = X_train[col].cat.categories.tolist()
+
     results = {}
     boosters = {}
 
@@ -105,7 +110,7 @@ def train_country(
     top_features = sorted(zip(feat_names, importance), key=lambda x: -x[1])
     results["top_features"] = [(name, float(imp)) for name, imp in top_features[:10]]
 
-    return {"boosters": boosters, "metrics": results}
+    return {"boosters": boosters, "metrics": results, "cat_values": cat_values}
 
 
 def tune_country(train_df: pd.DataFrame, test_df: pd.DataFrame, country_code: str, n_trials: int, gpu: bool = False) -> dict:
@@ -223,6 +228,7 @@ def main() -> None:
             "params": params,
             "encodings": encodings,
             "country_code": cc,
+            "cat_values": result["cat_values"],
         }
         output_path = os.path.join(args.output_dir, f"salary_{cc}.pkl")
         with open(output_path, "wb") as f:
