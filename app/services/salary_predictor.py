@@ -81,26 +81,32 @@ class SalaryPredictor:
             "description_word_count": word_count,
         }
 
-        cat_cols = {"country": 3, "work_mode": 4, "contract_type": 5}
-        row = [
-            features["title_encoded"],
-            features["city_title_encoded"],
-            features["category_encoded"],
-            features["country"],
-            features["work_mode"],
-            features["contract_type"],
-            features["description_word_count"],
-        ]
-        # Encode categoricals as integer codes matching training order
-        for col, idx in cat_cols.items():
-            cats = self._cat_values.get(col, [])
-            val = row[idx]
-            row[idx] = cats.index(val) if val in cats else len(cats)
+        import pandas as pd
 
-        data = np.array([row], dtype=np.float64)
+        row = {
+            "title_encoded": features["title_encoded"],
+            "city_title_encoded": features["city_title_encoded"],
+            "region_title_encoded": features["region_title_encoded"],
+            "category_encoded": features["category_encoded"],
+            "work_mode": features["work_mode"],
+            "contract_type": features["contract_type"],
+            "description_word_count": features["description_word_count"],
+        }
+        df = pd.DataFrame([row])
 
-        salary_min = float(model["min"].predict(data)[0])
-        salary_max = float(model["max"].predict(data)[0])
+        # Reconstruct pandas categoricals matching training
+        pandas_cat = model["min"].dump_model().get("pandas_categorical", [])
+        cat_cols = ["work_mode", "contract_type"]
+        for i, col in enumerate(cat_cols):
+            if i < len(pandas_cat):
+                cats = list(pandas_cat[i])
+                val = df[col].iloc[0]
+                if val not in cats:
+                    cats.append(val)
+                df[col] = pd.Categorical(df[col], categories=cats)
+
+        salary_min = float(model["min"].predict(df)[0])
+        salary_max = float(model["max"].predict(df)[0])
 
         salary_min = max(0, salary_min)
         salary_max = max(salary_min, salary_max)
