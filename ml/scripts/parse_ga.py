@@ -92,7 +92,7 @@ def main():
     parser = argparse.ArgumentParser(description="Parse GA exports and join with jobl jobs")
     parser.add_argument("--ga-dir", default=GA_DIR)
     parser.add_argument("--output-dir", default=OUTPUT_DIR)
-    parser.add_argument("--min-sessions", type=int, default=20)
+    parser.add_argument("--min-sessions", type=int, default=0)
     parser.add_argument("--db-url", default=None)
     args = parser.parse_args()
 
