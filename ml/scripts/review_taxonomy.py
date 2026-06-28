@@ -54,7 +54,7 @@ Rules:
 - Keep titles concise: 1-4 words typically
 - For generic titles, pick the most common specialization from the samples
 - Do NOT over-specify (e.g. "Software Developer" is fine, don't make it "Full-Stack Software Developer")
-- Respond with ONLY the JSON array, no markdown or explanation"""
+- Respond with a JSON object containing a "results" key with an array of all entries. Example: {"results": [{"id": 1, "en": "...", "fr": "...", "changed": false}, ...]}"""
 
 
 def load_data(taxonomy_dir: str):
@@ -73,7 +73,7 @@ def build_batch(taxonomy: list, clusters: dict, start: int, batch_size: int) -> 
     for item in taxonomy[start:start + batch_size]:
         cluster_id = str(item["canonical_id"] - 1)
         cluster = clusters.get(cluster_id, {})
-        samples = cluster.get("sample_titles", [])[:10]
+        samples = cluster.get("sample_titles", [])[:5]
 
         batch.append({
             "id": item["canonical_id"],
@@ -96,19 +96,29 @@ def review_batch(client, model: str, batch: list) -> list | None:
                     {"role": "system", "content": SYSTEM_PROMPT},
                     {"role": "user", "content": user_msg},
                 ],
-                max_tokens=4000,
-                temperature=0.0,
+                response_format={"type": "json_object"},
             )
             content = resp.choices[0].message.content or ""
-            content = content.strip()
-            if content.startswith("```"):
-                content = content.strip("`").replace("json\n", "", 1).strip()
+            if not content:
+                print(f"\n    EMPTY RESPONSE (attempt {attempt + 1}/3)", flush=True)
+                if attempt < 2:
+                    time.sleep(2)
+                    continue
+                return None
             result = json.loads(content)
             if isinstance(result, list):
                 return result
+            if isinstance(result, dict):
+                for v in result.values():
+                    if isinstance(v, list):
+                        return v
+            print(f"\n    UNEXPECTED FORMAT: {str(result)[:300]}", flush=True)
+            return None
         except Exception as e:
+            print(f"\n    ERROR (attempt {attempt + 1}/3): {e}", flush=True)
+            if hasattr(resp, 'choices') and resp.choices:
+                print(f"    RAW: {(resp.choices[0].message.content or '')[:300]}", flush=True)
             if attempt == 2:
-                print(f"    ERROR: {e}", flush=True)
                 return None
             time.sleep(2)
     return None
@@ -152,7 +162,17 @@ def main():
                 results_map[r["id"]] = r
             print(f" {changed} changed", flush=True)
         else:
-            print(" FAILED — keeping originals", flush=True)
+            print(" FAILED — retrying ...", end="", flush=True)
+            time.sleep(3)
+            result = review_batch(client, args.model, batch)
+            if result:
+                changed = sum(1 for r in result if r.get("changed"))
+                total_changed += changed
+                for r in result:
+                    results_map[r["id"]] = r
+                print(f" {changed} changed (retry)", flush=True)
+            else:
+                print(" FAILED again — keeping originals", flush=True)
 
     # Apply changes
     for item in taxonomy:
