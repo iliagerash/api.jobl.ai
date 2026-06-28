@@ -81,17 +81,27 @@ class SalaryPredictor:
             "description_word_count": word_count,
         }
 
-        import pandas as pd
-        df = pd.DataFrame([features])
-        for col in ["country", "work_mode", "contract_type"]:
-            cats = list(self._cat_values.get(col, []))
-            val = df[col].iloc[0]
-            if val not in cats:
-                cats.append(val)
-            df[col] = pd.Categorical(df[col], categories=cats)
+        cat_cols = {"country": 4, "work_mode": 5, "contract_type": 6}
+        row = [
+            features["title_encoded"],
+            features["city_title_encoded"],
+            features["region_title_encoded"],
+            features["category_encoded"],
+            features["country"],
+            features["work_mode"],
+            features["contract_type"],
+            features["description_word_count"],
+        ]
+        # Encode categoricals as integer codes matching training order
+        for col, idx in cat_cols.items():
+            cats = self._cat_values.get(col, [])
+            val = row[idx]
+            row[idx] = cats.index(val) if val in cats else len(cats)
 
-        salary_min = float(model["min"].predict(df)[0])
-        salary_max = float(model["max"].predict(df)[0])
+        data = np.array([row], dtype=np.float64)
+
+        salary_min = float(model["min"].predict(data)[0])
+        salary_max = float(model["max"].predict(data)[0])
 
         salary_min = max(0, salary_min)
         salary_max = max(salary_min, salary_max)

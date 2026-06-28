@@ -104,18 +104,42 @@ class ProfitabilityPredictor:
             "month_posted": month,
         }
 
-        import pandas as pd
-        df = pd.DataFrame([features])
-        for col in ["country", "destination_cat", "salary_period_cat", "work_mode", "contract_type"]:
-            cats = list(self._cat_values.get(col, []))
-            val = df[col].iloc[0]
-            if val not in cats:
-                cats.append(val)
-            df[col] = pd.Categorical(df[col], categories=cats)
+        cat_cols = {
+            "country": 5,
+            "destination_cat": 6,
+            "salary_period_cat": 10,
+            "work_mode": 11,
+            "contract_type": 12,
+        }
+        row = [
+            features["title_encoded"],
+            features["company_name_encoded"],
+            features["city_title_encoded"],
+            features["region_title_encoded"],
+            features["category_encoded"],
+            features["country"],
+            features["destination_cat"],
+            features["salary_present"],
+            features["salary_min"],
+            features["salary_max"],
+            features["salary_period_cat"],
+            features["work_mode"],
+            features["contract_type"],
+            features["description_word_count"],
+            features["city_population_tier"],
+            features["day_of_week_posted"],
+            features["month_posted"],
+        ]
+        for col, idx in cat_cols.items():
+            cats = self._cat_values.get(col, [])
+            val = row[idx]
+            row[idx] = cats.index(val) if val in cats else len(cats)
 
-        p_revenue = float(self._classifier.predict(df)[0])
-        predicted_revenue = float(self._revenue_model.predict(df)[0])
-        predicted_rps = float(self._rps_model.predict(df)[0])
+        data = np.array([row], dtype=np.float64)
+
+        p_revenue = float(self._classifier.predict(data)[0])
+        predicted_revenue = float(self._revenue_model.predict(data)[0])
+        predicted_rps = float(self._rps_model.predict(data)[0])
 
         combined_revenue = p_revenue * max(0, predicted_revenue)
 
