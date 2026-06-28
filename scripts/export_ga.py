@@ -49,6 +49,9 @@ PROPERTIES = {
     "singapore.jobradars.com": {"start_date": "2026-01-01"},
     "unitedkingdom.jobradars.com": {"start_date": "2026-01-01"},
     "jobspire.co.za": {"start_date": "2026-01-01"},
+    # SnapJobSearch account
+    "snapjobsearch.com": {"start_date": "2026-01-01"},
+    "ca.snapjobsearch.com": {"start_date": "2026-01-01"},
 }
 
 SCOPES = [
