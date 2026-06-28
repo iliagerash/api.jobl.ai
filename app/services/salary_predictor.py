@@ -81,11 +81,10 @@ class SalaryPredictor:
             "description_word_count": word_count,
         }
 
-        cat_cols = {"country": 4, "work_mode": 5, "contract_type": 6}
+        cat_cols = {"country": 3, "work_mode": 4, "contract_type": 5}
         row = [
             features["title_encoded"],
             features["city_title_encoded"],
-            features["region_title_encoded"],
             features["category_encoded"],
             features["country"],
             features["work_mode"],
