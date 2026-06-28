@@ -161,7 +161,7 @@ def main():
     if args.properties:
         target_names = {n.strip() for n in args.properties.split(",")}
     else:
-        target_names = set(PROPERTIES.keys())
+        target_names = set(PROPERTIES.keys()) & set(prop_map.keys())
 
     os.makedirs(args.output_dir, exist_ok=True)
 
