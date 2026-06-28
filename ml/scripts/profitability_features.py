@@ -197,11 +197,10 @@ def main():
     train_out = train_df[feature_cols + target_cols + meta_cols].copy()
     test_out = test_df[feature_cols + target_cols + meta_cols].copy()
 
-    # Fill NaN salary values
-    train_out["salary_min"] = train_out["salary_min"].fillna(0)
-    train_out["salary_max"] = train_out["salary_max"].fillna(0)
-    test_out["salary_min"] = test_out["salary_min"].fillna(0)
-    test_out["salary_max"] = test_out["salary_max"].fillna(0)
+    # Force salary to numeric
+    for out in [train_out, test_out]:
+        out["salary_min"] = pd.to_numeric(out["salary_min"], errors="coerce").fillna(0).astype(float)
+        out["salary_max"] = pd.to_numeric(out["salary_max"], errors="coerce").fillna(0).astype(float)
 
     # Save
     train_path = os.path.join(args.data_dir, "train.parquet")
