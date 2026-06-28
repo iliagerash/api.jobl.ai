@@ -60,7 +60,7 @@ def list_properties(credentials) -> list[dict]:
     for account in accounts:
         account_id = account.name.split("/")[-1]
         for prop in admin_client.list_properties(
-            filter=f"parent:accounts/{account_id}"
+            request={"filter": f"parent:accounts/{account_id}"}
         ):
             properties.append({
                 "property_id": prop.name.split("/")[-1],
