@@ -139,6 +139,7 @@ def main():
     df["contract_type"] = df["contract"].fillna("unknown").astype("category")
     df["salary_period_cat"] = df["salary_period"].fillna("unknown").astype("category")
     df["country"] = df["country_code"].astype("category")
+    df["destination_cat"] = df["destination"].astype("category")
     df["category_id"] = df["category_id"].fillna(0).astype(int)
 
     # Temporal features
@@ -185,7 +186,7 @@ def main():
     # Final columns
     feature_cols = [
         "title_encoded", "company_name_encoded", "city_title_encoded",
-        "region_title_encoded", "category_encoded", "country",
+        "region_title_encoded", "category_encoded", "country", "destination_cat",
         "salary_present", "salary_min", "salary_max", "salary_period_cat",
         "work_mode", "contract_type", "description_word_count",
         "city_population_tier", "day_of_week_posted", "month_posted",

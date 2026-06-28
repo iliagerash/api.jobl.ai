@@ -1,8 +1,11 @@
 """
 train_profitability.py
 ───────────────────────
-Train LightGBM profitability ranker — predicts total_revenue and rps.
-Single model trained on all countries (unlike salary which is per-country).
+Train two-stage LightGBM profitability ranker:
+  Stage 1: Classifier — predicts whether a job generates any revenue (binary)
+  Stage 2: Regressor — predicts how much revenue, trained only on revenue > 0 jobs
+
+Final prediction = P(revenue > 0) × predicted_revenue_if_positive
 
 Usage:
     python -u ml/scripts/train_profitability.py
@@ -10,6 +13,7 @@ Usage:
     python -u ml/scripts/train_profitability.py --tune --gpu
 
 Outputs:
+    models/profitability_classifier.pkl
     models/profitability_revenue.pkl
     models/profitability_rps.pkl
     models/profitability_metrics.json
@@ -32,15 +36,29 @@ OUTPUT_DIR = "models"
 
 FEATURE_COLS = [
     "title_encoded", "company_name_encoded", "city_title_encoded",
-    "region_title_encoded", "category_encoded", "country",
+    "region_title_encoded", "category_encoded", "country", "destination_cat",
     "salary_present", "salary_min", "salary_max", "salary_period_cat",
     "work_mode", "contract_type", "description_word_count",
     "city_population_tier", "day_of_week_posted", "month_posted",
 ]
 
-CAT_FEATURES = ["country", "salary_period_cat", "work_mode", "contract_type"]
+CAT_FEATURES = ["country", "destination_cat", "salary_period_cat", "work_mode", "contract_type"]
 
-DEFAULT_PARAMS = {
+DEFAULT_CLASSIFIER_PARAMS = {
+    "objective": "binary",
+    "metric": "auc",
+    "num_leaves": 63,
+    "learning_rate": 0.05,
+    "feature_fraction": 0.8,
+    "bagging_fraction": 0.8,
+    "bagging_freq": 5,
+    "feature_pre_filter": False,
+    "is_unbalance": True,
+    "n_jobs": -1,
+    "verbosity": -1,
+}
+
+DEFAULT_REGRESSOR_PARAMS = {
     "objective": "regression",
     "metric": "mae",
     "num_leaves": 63,
@@ -53,11 +71,6 @@ DEFAULT_PARAMS = {
     "verbosity": -1,
 }
 
-TARGETS = {
-    "total_revenue": "profitability_revenue",
-    "rps": "profitability_rps",
-}
-
 
 def prepare_features(df: pd.DataFrame) -> pd.DataFrame:
     X = df[FEATURE_COLS].copy()
@@ -66,19 +79,16 @@ def prepare_features(df: pd.DataFrame) -> pd.DataFrame:
     return X
 
 
-def evaluate(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
+def evaluate_ranking(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
     mae = np.mean(np.abs(y_pred - y_true))
     nonzero = y_true > 0
-    if nonzero.sum() > 0:
-        mape_nonzero = np.mean(np.abs((y_pred[nonzero] - y_true[nonzero]) / y_true[nonzero])) * 100
-    else:
-        mape_nonzero = 0
+    mape_nonzero = np.mean(np.abs((y_pred[nonzero] - y_true[nonzero]) / y_true[nonzero])) * 100 if nonzero.sum() > 0 else 0
     spearman = pd.Series(y_pred).corr(pd.Series(y_true), method="spearman")
 
     sorted_idx = np.argsort(-y_pred)
     top_100_pred = set(sorted_idx[:100])
     top_100_actual = set(np.argsort(-y_true)[:100])
-    precision_100 = len(top_100_pred & top_100_actual) / 100 * 100
+    precision_100 = len(top_100_pred & top_100_actual) / min(100, len(y_true)) * 100
 
     top_50pct_idx = sorted_idx[:len(sorted_idx) // 2]
     revenue_capture = y_true[top_50pct_idx].sum() / max(y_true.sum(), 1e-10) * 100
@@ -92,17 +102,32 @@ def evaluate(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
     }
 
 
-def tune_model(X_train, y_train, X_test, y_test, n_trials: int, gpu: bool) -> dict:
+def evaluate_classifier(y_true: np.ndarray, y_pred_proba: np.ndarray) -> dict:
+    from sklearn.metrics import roc_auc_score, precision_score, recall_score
+    y_pred_binary = (y_pred_proba >= 0.5).astype(int)
+    return {
+        "auc": float(roc_auc_score(y_true, y_pred_proba)),
+        "precision": float(precision_score(y_true, y_pred_binary, zero_division=0)),
+        "recall": float(recall_score(y_true, y_pred_binary, zero_division=0)),
+        "positive_rate_actual": float(y_true.mean()),
+        "positive_rate_predicted": float(y_pred_binary.mean()),
+    }
+
+
+def tune_model(X_train, y_train, X_test, y_test, n_trials: int, gpu: bool, objective: str, metric: str) -> dict:
     import optuna
     optuna.logging.set_verbosity(optuna.logging.WARNING)
+
+    is_classifier = objective == "binary"
+    base_params = DEFAULT_CLASSIFIER_PARAMS if is_classifier else DEFAULT_REGRESSOR_PARAMS
 
     train_data = lgb.Dataset(X_train, label=y_train, categorical_feature=CAT_FEATURES, free_raw_data=False, params={"feature_pre_filter": False})
     val_data = lgb.Dataset(X_test, label=y_test, reference=train_data, free_raw_data=False)
 
-    def objective(trial):
+    def trial_objective(trial):
         params = {
-            "objective": "regression",
-            "metric": "mae",
+            "objective": objective,
+            "metric": metric,
             "feature_pre_filter": False,
             "num_leaves": trial.suggest_int("num_leaves", 31, 127),
             "learning_rate": trial.suggest_float("learning_rate", 0.01, 0.1, log=True),
@@ -115,6 +140,8 @@ def tune_model(X_train, y_train, X_test, y_test, n_trials: int, gpu: bool) -> di
             "n_jobs": -1,
             "verbosity": -1,
         }
+        if is_classifier:
+            params["is_unbalance"] = True
         if gpu:
             params["device"] = "gpu"
 
@@ -124,21 +151,32 @@ def tune_model(X_train, y_train, X_test, y_test, n_trials: int, gpu: bool) -> di
             callbacks=[lgb.early_stopping(stopping_rounds=30, verbose=False)],
         )
         preds = booster.predict(X_test)
-        return float(np.mean(np.abs(preds - y_test)))
+
+        if is_classifier:
+            from sklearn.metrics import roc_auc_score
+            return -float(roc_auc_score(y_test, preds))
+        else:
+            return float(np.mean(np.abs(preds - y_test)))
 
     def print_progress(study, trial):
-        print(f"    trial {trial.number + 1}/{n_trials}  MAE={trial.value:.6f}  best={study.best_value:.6f}", flush=True)
+        val = -trial.value if is_classifier else trial.value
+        best = -study.best_value if is_classifier else study.best_value
+        label = "AUC" if is_classifier else "MAE"
+        print(f"    trial {trial.number + 1}/{n_trials}  {label}={val:.6f}  best={best:.6f}", flush=True)
 
-    study = optuna.create_study(direction="minimize")
-    study.optimize(objective, n_trials=n_trials, callbacks=[print_progress])
+    direction = "minimize"
+    study = optuna.create_study(direction=direction)
+    study.optimize(trial_objective, n_trials=n_trials, callbacks=[print_progress])
 
-    print(f"    Best MAE: {study.best_value:.6f}")
+    best_val = -study.best_value if is_classifier else study.best_value
+    label = "AUC" if is_classifier else "MAE"
+    print(f"    Best {label}: {best_val:.6f}")
     print(f"    Best params: {study.best_params}")
-    return {**DEFAULT_PARAMS, **study.best_params}
+    return {**base_params, **study.best_params}
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Train profitability ranker")
+    parser = argparse.ArgumentParser(description="Train two-stage profitability ranker")
     parser.add_argument("--data-dir", default=DATA_DIR)
     parser.add_argument("--output-dir", default=OUTPUT_DIR)
     parser.add_argument("--n-rounds", type=int, default=500)
@@ -163,70 +201,145 @@ def main():
 
     all_metrics = {}
 
-    for target_col, model_name in TARGETS.items():
-        print(f"\n{'='*60}")
-        print(f"Training: {target_col}")
+    # ── Stage 1: Classifier (revenue > 0 vs = 0) ──
+    print(f"\n{'='*60}")
+    print("Stage 1: Classifier (has revenue?)")
 
-        y_train = train_df[target_col].values
-        y_test = test_df[target_col].values
+    y_train_cls = (train_df["total_revenue"] > 0).astype(int).values
+    y_test_cls = (test_df["total_revenue"] > 0).astype(int).values
+    print(f"  Train: {y_train_cls.sum():,} positive / {len(y_train_cls):,} total ({y_train_cls.mean()*100:.1f}%)")
+    print(f"  Test:  {y_test_cls.sum():,} positive / {len(y_test_cls):,} total ({y_test_cls.mean()*100:.1f}%)")
+
+    if args.tune:
+        print(f"  Tuning ({args.tune_trials} trials) ...")
+        cls_params = tune_model(X_train, y_train_cls, X_test, y_test_cls, args.tune_trials, args.gpu, "binary", "auc")
+    else:
+        cls_params = DEFAULT_CLASSIFIER_PARAMS.copy()
+
+    if args.gpu:
+        cls_params["device"] = "gpu"
+
+    cls_train_data = lgb.Dataset(X_train, label=y_train_cls, categorical_feature=CAT_FEATURES, free_raw_data=False)
+    cls_val_data = lgb.Dataset(X_test, label=y_test_cls, reference=cls_train_data, free_raw_data=False)
+
+    cls_booster = lgb.train(
+        cls_params, cls_train_data, num_boost_round=args.n_rounds,
+        valid_sets=[cls_val_data], valid_names=["val"],
+        callbacks=[
+            lgb.early_stopping(stopping_rounds=args.early_stopping, verbose=False),
+            lgb.log_evaluation(period=50),
+        ],
+    )
+
+    cls_preds = cls_booster.predict(X_test)
+    cls_metrics = evaluate_classifier(y_test_cls, cls_preds)
+    all_metrics["classifier"] = cls_metrics
+
+    print(f"\n  Classifier results:")
+    print(f"    AUC:       {cls_metrics['auc']:.4f}")
+    print(f"    Precision: {cls_metrics['precision']:.4f}")
+    print(f"    Recall:    {cls_metrics['recall']:.4f}")
+
+    cls_artifact = {
+        "booster": cls_booster.model_to_string(),
+        "params": cls_params,
+        "encodings": encodings,
+        "target": "has_revenue",
+    }
+    cls_path = os.path.join(args.output_dir, "profitability_classifier.pkl")
+    with open(cls_path, "wb") as f:
+        pickle.dump(cls_artifact, f)
+    print(f"  Saved: {cls_path}")
+
+    # ── Stage 2: Regressors (revenue and rps, trained on positive-only) ──
+    train_pos = train_df[train_df["total_revenue"] > 0]
+    test_pos = test_df[test_df["total_revenue"] > 0]
+    X_train_pos = prepare_features(train_pos)
+    X_test_pos = prepare_features(test_pos)
+    print(f"\n  Positive samples: train={len(train_pos):,}  test={len(test_pos):,}")
+
+    for target_col, model_name in [("total_revenue", "profitability_revenue"), ("rps", "profitability_rps")]:
+        print(f"\n{'='*60}")
+        print(f"Stage 2: Regressor ({target_col}, positive-only)")
+
+        y_train_reg = train_pos[target_col].values
+        y_test_reg = test_pos[target_col].values
 
         if args.tune:
             print(f"  Tuning ({args.tune_trials} trials) ...")
-            params = tune_model(X_train, y_train, X_test, y_test, args.tune_trials, args.gpu)
+            reg_params = tune_model(X_train_pos, y_train_reg, X_test_pos, y_test_reg, args.tune_trials, args.gpu, "regression", "mae")
         else:
-            params = DEFAULT_PARAMS.copy()
+            reg_params = DEFAULT_REGRESSOR_PARAMS.copy()
 
         if args.gpu:
-            params["device"] = "gpu"
+            reg_params["device"] = "gpu"
 
-        train_data = lgb.Dataset(X_train, label=y_train, categorical_feature=CAT_FEATURES, free_raw_data=False)
-        val_data = lgb.Dataset(X_test, label=y_test, reference=train_data, free_raw_data=False)
+        reg_train_data = lgb.Dataset(X_train_pos, label=y_train_reg, categorical_feature=CAT_FEATURES, free_raw_data=False)
+        reg_val_data = lgb.Dataset(X_test_pos, label=y_test_reg, reference=reg_train_data, free_raw_data=False)
 
-        booster = lgb.train(
-            params, train_data, num_boost_round=args.n_rounds,
-            valid_sets=[val_data], valid_names=["val"],
+        reg_booster = lgb.train(
+            reg_params, reg_train_data, num_boost_round=args.n_rounds,
+            valid_sets=[reg_val_data], valid_names=["val"],
             callbacks=[
                 lgb.early_stopping(stopping_rounds=args.early_stopping, verbose=False),
                 lgb.log_evaluation(period=50),
             ],
         )
 
-        preds = booster.predict(X_test)
-        metrics = evaluate(y_test, preds)
-        all_metrics[target_col] = metrics
-
-        print(f"\n  Results:")
-        print(f"    MAE:                  {metrics['mae']:.6f}")
-        print(f"    MAPE (nonzero):       {metrics['mape_nonzero']:.1f}%")
-        print(f"    Spearman correlation: {metrics['spearman']:.4f}")
-        print(f"    Precision@100:        {metrics['precision_at_100']:.1f}%")
-        print(f"    Revenue capture (top 50%): {metrics['revenue_capture_top50pct']:.1f}%")
+        # Evaluate regressor on positive-only
+        reg_preds = reg_booster.predict(X_test_pos)
+        reg_metrics = evaluate_ranking(y_test_reg, reg_preds)
+        print(f"\n  Regressor results (positive-only):")
+        print(f"    MAE:      {reg_metrics['mae']:.6f}")
+        print(f"    Spearman: {reg_metrics['spearman']:.4f}")
 
         # Feature importance
-        importance = booster.feature_importance(importance_type="gain")
-        feat_names = booster.feature_name()
+        importance = reg_booster.feature_importance(importance_type="gain")
+        feat_names = reg_booster.feature_name()
         top = sorted(zip(feat_names, importance), key=lambda x: -x[1])[:10]
         print(f"\n  Top features:")
         for name, imp in top:
             print(f"    {name}: {imp:.0f}")
 
-        # Save model
-        artifact = {
-            "booster": booster.model_to_string(),
-            "params": params,
+        reg_artifact = {
+            "booster": reg_booster.model_to_string(),
+            "params": reg_params,
             "encodings": encodings,
             "target": target_col,
         }
-        output_path = os.path.join(args.output_dir, f"{model_name}.pkl")
-        with open(output_path, "wb") as f:
-            pickle.dump(artifact, f)
-        print(f"\n  Saved: {output_path}")
+        reg_path = os.path.join(args.output_dir, f"{model_name}.pkl")
+        with open(reg_path, "wb") as f:
+            pickle.dump(reg_artifact, f)
+        print(f"  Saved: {reg_path}")
+
+        # ── Combined evaluation: P(revenue>0) × predicted_revenue ──
+        if target_col == "total_revenue":
+            print(f"\n{'='*60}")
+            print("Combined evaluation (classifier × regressor):")
+
+            combined_preds = cls_preds * reg_booster.predict(X_test)
+            y_test_revenue = test_df["total_revenue"].values
+            combined_metrics = evaluate_ranking(y_test_revenue, combined_preds)
+            all_metrics["combined_revenue"] = combined_metrics
+
+            print(f"    MAE:                  {combined_metrics['mae']:.6f}")
+            print(f"    Spearman correlation: {combined_metrics['spearman']:.4f}")
+            print(f"    Precision@100:        {combined_metrics['precision_at_100']:.1f}%")
+            print(f"    Revenue capture (top 50%): {combined_metrics['revenue_capture_top50pct']:.1f}%")
+
+        all_metrics[target_col] = reg_metrics
 
     # Summary
     print(f"\n{'='*60}")
     print("Summary:")
-    for target, m in all_metrics.items():
-        print(f"  {target}: MAE={m['mae']:.6f}  Spearman={m['spearman']:.4f}  P@100={m['precision_at_100']:.1f}%  RevCapture={m['revenue_capture_top50pct']:.1f}%")
+    print(f"  Classifier: AUC={all_metrics['classifier']['auc']:.4f}")
+    if "combined_revenue" in all_metrics:
+        m = all_metrics["combined_revenue"]
+        print(f"  Combined revenue: Spearman={m['spearman']:.4f}  P@100={m['precision_at_100']:.1f}%  RevCapture={m['revenue_capture_top50pct']:.1f}%")
+    for target in ["total_revenue", "rps"]:
+        if target in all_metrics:
+            m = all_metrics[target]
+            print(f"  {target} (pos-only): Spearman={m['spearman']:.4f}  P@100={m['precision_at_100']:.1f}%")
 
     metrics_path = os.path.join(args.output_dir, "profitability_metrics.json")
     with open(metrics_path, "w") as f:
