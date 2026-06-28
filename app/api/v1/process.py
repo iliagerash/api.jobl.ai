@@ -165,6 +165,16 @@ class ProcessRequest(BaseModel):
     description: str
     original_category: str | None = None
     full: int = Field(default=1, ge=0, le=1)
+    country_code: str | None = None
+    city_title: str | None = None
+    region_title: str | None = None
+    company_name: str | None = None
+    contract: str | None = None
+    is_remote: bool = False
+    salary_min: float | None = None
+    salary_max: float | None = None
+    salary_period: str | None = None
+    destination: str | None = None
 
     model_config = ConfigDict(str_strip_whitespace=True)
 
@@ -175,6 +185,24 @@ class CategoryOut(BaseModel):
     confidence: float | None = None
 
 
+class KeywordOut(BaseModel):
+    canonical_id: int
+    title: str
+    distance: float
+
+
+class SalaryPrediction(BaseModel):
+    salary_min: float
+    salary_max: float
+    salary_period: str
+
+
+class ProfitabilityPrediction(BaseModel):
+    predicted_revenue: float
+    predicted_rps: float
+    priority_tier: str
+
+
 class ProcessResponse(BaseModel):
     title_normalized: str
     description_clean: str
@@ -183,6 +211,9 @@ class ProcessResponse(BaseModel):
     category: CategoryOut | None
     embedding: list[float] | None = None
     skills: list[str] | None = None
+    keyword: KeywordOut | None = None
+    salary_prediction: SalaryPrediction | None = None
+    profitability: ProfitabilityPrediction | None = None
 
 
 @router.post("/process", response_model=ProcessResponse)
@@ -321,6 +352,68 @@ def process(body: ProcessRequest, request: Request) -> ProcessResponse:
         except Exception:
             logger.exception("skill_extractor.extract_skills failed")
 
+    # 9. Keyword matching (nearest keyword by vector similarity)
+    keyword: KeywordOut | None = None
+    cat_id = category.id if category else None
+    if embedding and cat_id and lang:
+        try:
+            from sqlalchemy import text as sa_text
+            from app.db.session import SessionLocal
+            db = SessionLocal()
+            vec_str = "[" + ",".join(f"{x:.6f}" for x in embedding) + "]"
+            row = db.execute(sa_text("""
+                SELECT k.canonical_id, k.title, CAST(:vec AS vector) <=> k.embedding AS distance
+                FROM keywords k
+                WHERE k.language_code = :lang
+                  AND k.category_id = :cat_id
+                  AND k.embedding IS NOT NULL
+                ORDER BY CAST(:vec AS vector) <=> k.embedding
+                LIMIT 1
+            """), {"vec": vec_str, "lang": lang, "cat_id": cat_id}).first()
+            if row and row.distance <= 0.5:
+                keyword = KeywordOut(canonical_id=row.canonical_id, title=row.title, distance=round(float(row.distance), 4))
+            db.close()
+        except Exception:
+            logger.exception("keyword matching failed")
+
+    # 10. Salary prediction (only if salary not already stated)
+    salary_prediction: SalaryPrediction | None = None
+    has_salary = body.salary_min and body.salary_min > 0
+    salary_predictor = getattr(request.app.state, "salary_predictor", None)
+    if not has_salary and salary_predictor and salary_predictor.is_ready():
+        try:
+            cat_id = category.id if category else None
+            result = salary_predictor.predict(
+                title=body.title, country_code=body.country_code or "XX",
+                city_title=body.city_title, region_title=body.region_title,
+                category_id=cat_id, is_remote=body.is_remote,
+                contract=body.contract, description=plain_text,
+            )
+            if result:
+                salary_prediction = SalaryPrediction(**result)
+        except Exception:
+            logger.exception("salary_predictor.predict failed")
+
+    # 10. Profitability prediction
+    profitability: ProfitabilityPrediction | None = None
+    profitability_predictor = getattr(request.app.state, "profitability_predictor", None)
+    if profitability_predictor and profitability_predictor.is_ready():
+        try:
+            cat_id = category.id if category else None
+            result = profitability_predictor.predict(
+                title=body.title, company_name=body.company_name,
+                country_code=body.country_code or "XX",
+                city_title=body.city_title, region_title=body.region_title,
+                category_id=cat_id, destination=body.destination,
+                is_remote=body.is_remote, contract=body.contract,
+                salary_min=body.salary_min, salary_max=body.salary_max,
+                salary_period=body.salary_period, description=plain_text,
+            )
+            if result:
+                profitability = ProfitabilityPrediction(**result)
+        except Exception:
+            logger.exception("profitability_predictor.predict failed")
+
     return ProcessResponse(
         title_normalized=title_normalized,
         description_clean=description_clean,
@@ -329,4 +422,7 @@ def process(body: ProcessRequest, request: Request) -> ProcessResponse:
         category=category,
         embedding=embedding,
         skills=skills,
+        keyword=keyword,
+        salary_prediction=salary_prediction,
+        profitability=profitability,
     )

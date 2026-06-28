@@ -1,6 +1,6 @@
 # api.jobl.ai
 
-FastAPI service that processes raw job postings: cleans HTML descriptions, extracts expiry dates and application emails, categorizes jobs into 26 industry categories, generates embedding vectors for semantic search, and extracts skills from multilingual job descriptions.
+FastAPI service that processes raw job postings: cleans HTML descriptions, extracts expiry dates and application emails, categorizes jobs into 26 industry categories, generates embedding vectors for semantic search, extracts skills from multilingual job descriptions, predicts salary ranges, estimates revenue potential, and matches jobs to a normalized keyword taxonomy.
 
 Includes a background sync worker that pulls jobs from MySQL source databases into PostgreSQL.
 
@@ -9,6 +9,7 @@ Includes a background sync worker that pulls jobs from MySQL source databases in
 ```
 Scraper flow (every new job):
   Scraper → POST /v1/process → category + clean description + embedding + skills
+                              + salary prediction + profitability + keyword
           → stores in scraper DB → flows to job boards
 
 Job board flow (direct submissions):
@@ -27,6 +28,9 @@ Resume extraction (paying candidates):
 | Bi-encoder (ONNX) | ~2.5 GB | Generates 1024-dim embedding vectors for semantic search |
 | LightGBM categorizer | ~50 MB | Classifies jobs into 26 industry categories |
 | Skill taxonomy (ESCO) | ~50 MB | Matches 13,900 skills in 10 languages from Postgres |
+| Salary predictor | ~10 MB | LightGBM per-country salary range prediction |
+| Profitability predictor | ~10 MB | Two-stage LightGBM revenue/RPS prediction |
+| Keyword matching | DB query | Nearest keyword from 1,391 normalized job titles via pgvector |
 | **Total per worker** | **~2.6 GB** | |
 | **4 workers + Postgres + OS** | **~14.5 GB** | **~15 GB headroom** |
 
@@ -46,6 +50,7 @@ Resume extraction (paying candidates):
 - [Migrations](#migrations)
 - [Categorizer Training](#categorizer-training)
   - [Hyperparameter Tuning](#2a-tune-hyperparameters-optional)
+- [Intelligence Models](#intelligence-models)
 - [Manual Labelling](#manual-labelling)
 - [Sync Worker](#sync-worker)
 - [Resume XML Import](#resume-xml-import)
@@ -72,7 +77,13 @@ POST /v1/process
       │
       ├─ Embedding (bi-encoder ONNX, 1024-dim vector)
       │
-      └─ Skill extraction (ESCO taxonomy, 13,900 skills × 10 languages)
+      ├─ Skill extraction (ESCO taxonomy, 13,900 skills × 10 languages)
+      │
+      ├─ Keyword matching (nearest from 1,391 normalized titles via pgvector)
+      │
+      ├─ Salary prediction (LightGBM per-country, skipped if salary stated)
+      │
+      └─ Profitability prediction (two-stage LightGBM: classifier + regressor)
 ```
 
 ```
@@ -104,10 +115,12 @@ api.jobl.ai/
 │   │   ├── source_country.py    # source MySQL DB → country mapping
 │   │   └── sync_state.py        # sync cursor (last synced job ID per DB)
 │   ├── services/
-│   │   ├── language.py          # langid-based language detection
-│   │   ├── cleaner.py           # HTML cleaner + expiry extractor
-│   │   ├── normalizer.py        # seq2seq title normalizer
-│   │   └── categorizer.py       # LightGBM job categorizer
+│   │   ├── language.py              # langid-based language detection
+│   │   ├── cleaner.py               # HTML cleaner + expiry extractor
+│   │   ├── normalizer.py            # seq2seq title normalizer
+│   │   ├── categorizer.py           # LightGBM job categorizer
+│   │   ├── salary_predictor.py      # LightGBM salary range prediction
+│   │   └── profitability_predictor.py  # Two-stage LightGBM revenue prediction
 │   └── api/v1/
 │       ├── health.py            # GET /health
 │       └── process.py           # POST /process
@@ -152,7 +165,17 @@ api.jobl.ai/
 {
   "title": "Senior Software Engineer - Full Time #ABC123",
   "description": "<div><p>Apply by April 30 2026. Send resume to jobs@example.com</p></div>",
-  "original_category": "Technology"
+  "original_category": "Technology",
+  "country_code": "AU",
+  "city_title": "Sydney",
+  "region_title": "New South Wales",
+  "company_name": "Acme Corp",
+  "contract": "permanent",
+  "is_remote": false,
+  "salary_min": null,
+  "salary_max": null,
+  "salary_period": null,
+  "destination": "au.workus.org"
 }
 ```
 
@@ -161,6 +184,16 @@ api.jobl.ai/
 | `title` | string (1–512 chars) | yes | Raw job title from source |
 | `description` | string | yes | Raw HTML job description |
 | `original_category` | string | no | Source category label; passed through for non-EN/FR jobs |
+| `country_code` | string | no | ISO 2-letter country code (enables salary prediction) |
+| `city_title` | string | no | City name (improves salary/profitability accuracy) |
+| `region_title` | string | no | Region/state name |
+| `company_name` | string | no | Company name (used by profitability model) |
+| `contract` | string | no | Contract type (permanent, contract, etc.) |
+| `is_remote` | bool | no | Whether the job is remote (default: false) |
+| `salary_min` | float | no | Stated salary min (if present, salary prediction is skipped) |
+| `salary_max` | float | no | Stated salary max |
+| `salary_period` | string | no | Salary period (hour, day, week, month, year) |
+| `destination` | string | no | Target job board domain (used by profitability model) |
 
 #### Response
 
@@ -174,6 +207,23 @@ api.jobl.ai/
     "id": 4,
     "title": "Information Technology",
     "confidence": 0.872
+  },
+  "embedding": [0.012, -0.034, ...],
+  "skills": ["Python", "Django", "PostgreSQL"],
+  "keyword": {
+    "canonical_id": 18,
+    "title": "Software Engineer",
+    "distance": 0.2341
+  },
+  "salary_prediction": {
+    "salary_min": 91000.0,
+    "salary_max": 120000.0,
+    "salary_period": "yearly"
+  },
+  "profitability": {
+    "predicted_revenue": 0.045231,
+    "predicted_rps": 0.008123,
+    "priority_tier": "medium"
   }
 }
 ```
@@ -185,10 +235,19 @@ api.jobl.ai/
 | `application_email` | string \| null | Extracted email, or null |
 | `expiry_date` | string \| null | ISO date (YYYY-MM-DD), or null if not found / non-EN/FR |
 | `category` | object \| null | `{id, title, confidence}` — null if model not loaded |
+| `embedding` | array \| null | 1024-dim float vector; null if bi-encoder not loaded |
+| `skills` | array \| null | Extracted skill names; null if skill extractor not loaded |
+| `keyword` | object \| null | `{canonical_id, title, distance}` — nearest normalized job title; null if no match within distance 0.5 or category/embedding missing |
+| `salary_prediction` | object \| null | `{salary_min, salary_max, salary_period}` — predicted salary range; null if salary already stated, country not supported (NZ, ZA), or model not loaded |
+| `profitability` | object \| null | `{predicted_revenue, predicted_rps, priority_tier}` — revenue potential estimate; null if model not loaded |
 
 `category.confidence` is the model's softmax probability for the predicted class (0–1). It is `null` for non-EN/FR jobs where the model is not run.
 
 For non-EN/FR jobs, `category` is `{"id": null, "title": "<original_category>", "confidence": null}` if `original_category` was provided.
+
+`salary_prediction` is skipped when `salary_min > 0` is provided in the request (salary already stated). Supported countries: AU, CA, GB, SG, US. Period is `monthly` for SG, `yearly` for others.
+
+`profitability.priority_tier` is one of `high`, `medium`, `low`, `minimal` based on the combined revenue prediction (classifier probability × regressor output).
 
 ---
 
@@ -310,10 +369,15 @@ Returns `{"id": N, "title": "...", "confidence": 0.xx}` where `confidence` is th
 |---|---|
 | `MODEL_DIR` not set | Rules-only title normalization for EN/FR |
 | `CATEGORIZER_MODEL_PATH` not set | `category: null` for EN/FR |
-| Either model fails to load at startup | App starts; affected field is `null`; error logged |
+| `BIENCODER_MODEL_PATH` not set | `embedding: null`, `keyword: null` |
+| `INTELLIGENCE_MODELS_PATH` not set | `salary_prediction: null`, `profitability: null` |
+| Any model fails to load at startup | App starts; affected field is `null`; error logged |
 | Non-EN/FR language detected | Title unchanged; description cleaned; `original_category` passed through if provided |
 | No email found in description | `application_email: null` |
 | Expiry date not found or past | `expiry_date: null` |
+| Salary already stated (`salary_min > 0`) | `salary_prediction: null` (skipped) |
+| Country not supported for salary (NZ, ZA) | `salary_prediction: null` |
+| No matching keyword within distance 0.5 | `keyword: null` |
 
 ---
 
@@ -325,7 +389,9 @@ PostgreSQL. Schema managed by Alembic.
 
 | Table | Description |
 |---|---|
-| `jobs` | Synced job postings (title, description, location, salary, AI fields, `category`) |
+| `jobs` | Synced job postings (title, description, location, salary, AI fields, predictions) |
+| `keywords` | Normalized job title taxonomy (1,391 canonical titles × en/fr with embeddings) |
+| `job_keywords` | Junction table: job → nearest keyword with distance |
 | `categories` | 26 industry categories (id, title) |
 | `category_map` | Maps source category strings → local `category_id` |
 | `countries` | Country lookup (code, name, alternate_names, language_codes) |
@@ -413,6 +479,7 @@ All settings are read from environment variables (or `.env`).
 | `MAX_INPUT_LENGTH` | `128` | Input truncation length |
 | `CATEGORIZER_MODEL_PATH` | — | Path to `categorizer.pkl` artifact |
 | `BIENCODER_MODEL_PATH` | — | Path to bi-encoder ONNX directory (e.g. `models/biencoder-onnx`) |
+| `INTELLIGENCE_MODELS_PATH` | — | Path to directory containing salary/profitability `.pkl` models (e.g. `models`) |
 | `EXTRACTOR_MODEL_PATH` | — | Path to extractor GGUF file (e.g. `models/extractor-gguf/model-Q4_K_M.gguf`) |
 | `VERIFIED_LABELLING` | `false` | Labelling UI: show only `verified=true` rows when `true` |
 
@@ -618,6 +685,99 @@ Results (100 jobs)
   With category: 95 (95.0%)
   Avg latency:   138ms
 ─────────────────────────────────────
+```
+
+---
+
+## Intelligence Models
+
+Three additional models provide salary predictions, profitability estimates, and keyword matching for processed jobs.
+
+### Salary Predictor
+
+LightGBM regression models — one per country — predicting `salary_min` and `salary_max` in the default period (yearly for AU/CA/GB/US, monthly for SG). NZ and ZA excluded due to insufficient data.
+
+```bash
+# Extract features (requires DATABASE_URL)
+python -u ml/scripts/salary_features.py
+
+# Train (with optional Optuna tuning)
+python -u ml/scripts/train_salary.py
+python -u ml/scripts/train_salary.py --tune --tune-trials 20
+
+# Evaluate
+python -u ml/scripts/eval_salary.py
+```
+
+Outputs: `models/salary_{CC}.pkl` per country.
+
+Features: target-encoded title, city, region, category; country, work mode, contract type, description word count.
+
+### Profitability Ranker
+
+Two-stage LightGBM model predicting revenue potential:
+1. **Classifier** — predicts P(revenue > 0) for a job
+2. **Regressor** — predicts how much revenue / revenue per session (trained on positive-revenue jobs only)
+
+Final prediction: `P(revenue > 0) × predicted_revenue`
+
+```bash
+# Export GA data (requires service account keys in data/ga_accounts/)
+python -u scripts/export_ga.py --key data/ga_accounts/Workus.json
+python -u scripts/export_ga.py --key data/ga_accounts/JobRadars.json
+python -u scripts/export_ga.py --key data/ga_accounts/SnapJobSearch.json
+
+# Parse and join with jobl jobs
+python -u ml/scripts/parse_ga.py
+
+# Extract features
+python -u ml/scripts/profitability_features.py
+
+# Train
+python -u ml/scripts/train_profitability.py --tune --tune-trials 20
+```
+
+Outputs: `models/profitability_classifier.pkl`, `models/profitability_revenue.pkl`, `models/profitability_rps.pkl`
+
+Features: target-encoded title, company, city, region, category; country, destination, salary info, work mode, contract, description length, city population tier, day of week, month.
+
+Priority tiers: `high` (revenue > 0.1), `medium` (> 0.01), `low` (> 0.001), `minimal`.
+
+### Keyword Taxonomy
+
+1,391 normalized job titles (en + fr) generated by clustering 517K distinct job titles with k-means, naming clusters with Qwen2.5-72B, and reviewing with GPT. Each keyword has a `canonical_id` linking English and French variants, and a `category_id` for disambiguation.
+
+```bash
+# Generate taxonomy (GPU host with vLLM)
+python -u ml/scripts/generate_taxonomy.py --model ml/models/base/qwen-72b-awq
+
+# Deduplicate
+python -u ml/scripts/dedup_taxonomy.py
+
+# Review with OpenAI
+python -u ml/scripts/review_taxonomy.py
+
+# Load into database (generates biencoder embeddings)
+python -u scripts/load_keywords.py --clear
+
+# Assign active jobs to nearest keywords
+python -u scripts/assign_keywords.py
+```
+
+Keyword matching at request time uses pgvector cosine distance, filtered by `language_code` and `category_id`. Jobs with no keyword within distance 0.5 return `keyword: null`.
+
+### Activate intelligence models
+
+Set `INTELLIGENCE_MODELS_PATH=models` in `.env` and restart the API. The `keywords` table must be populated in the database for keyword matching.
+
+### Backfill predictions on scraper
+
+```bash
+# On scraper host (with API running on GPU):
+php backfill_predictions.php australia
+
+# Sync predictions to jobl:
+python -u scripts/sync_predictions_from_scraper.py
 ```
 
 ---

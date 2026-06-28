@@ -76,6 +76,17 @@ class Job(Base):
     destination: Mapped[str | None] = mapped_column(VARCHAR(100), nullable=True)
     destination_job_id: Mapped[int | None] = mapped_column(BIGINT, nullable=True)
 
+    # Intelligence predictions
+    predicted_salary_min: Mapped[float | None] = mapped_column(NUMERIC(15, 2), nullable=True)
+    predicted_salary_max: Mapped[float | None] = mapped_column(NUMERIC(15, 2), nullable=True)
+    predicted_salary_period: Mapped[str | None] = mapped_column(VARCHAR(10), nullable=True)
+    predicted_revenue: Mapped[float | None] = mapped_column(NUMERIC(10, 6), nullable=True)
+    predicted_rps: Mapped[float | None] = mapped_column(NUMERIC(10, 6), nullable=True)
+    priority_tier: Mapped[str | None] = mapped_column(VARCHAR(10), nullable=True)
+    keyword_id: Mapped[int | None] = mapped_column(BIGINT, nullable=True)
+    keyword_title: Mapped[str | None] = mapped_column(VARCHAR(255), nullable=True)
+    keyword_distance: Mapped[float | None] = mapped_column(NUMERIC(6, 4), nullable=True)
+
     # Local AI processing
     title_clean: Mapped[str | None] = mapped_column(TEXT, nullable=True)
     description_clean: Mapped[str | None] = mapped_column(TEXT, nullable=True)

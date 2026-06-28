@@ -15,6 +15,8 @@ async def lifespan(app: FastAPI):
     app.state.categorizer = None
     app.state.biencoder = None
     app.state.skill_extractor = None
+    app.state.salary_predictor = None
+    app.state.profitability_predictor = None
 
     # Categorizer (LightGBM)
     if settings.categorizer_model_path:
@@ -31,6 +33,20 @@ async def lifespan(app: FastAPI):
             app.state.biencoder = BiEncoder(settings.biencoder_model_path)
         except Exception:
             logger.exception("biencoder failed to load")
+
+    # Intelligence models (salary + profitability)
+    if settings.intelligence_models_path:
+        try:
+            from app.services.salary_predictor import SalaryPredictor
+            app.state.salary_predictor = SalaryPredictor(settings.intelligence_models_path)
+        except Exception:
+            logger.exception("salary predictor failed to load")
+
+        try:
+            from app.services.profitability_predictor import ProfitabilityPredictor
+            app.state.profitability_predictor = ProfitabilityPredictor(settings.intelligence_models_path)
+        except Exception:
+            logger.exception("profitability predictor failed to load")
 
     # Skill extractor (taxonomy from Postgres)
     try:

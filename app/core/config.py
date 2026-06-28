@@ -25,13 +25,16 @@ class Settings(BaseSettings):
     # Bi-encoder (ONNX — optional, embedding field is null if absent)
     biencoder_model_path: str | None = None
 
+    # Intelligence models directory (salary + profitability — optional)
+    intelligence_models_path: str | None = None
+
 
     # Labelling UI
     verified_labelling: bool = False
 
     model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
 
-    @field_validator("model_dir", "tokenizer_dir", "categorizer_model_path", "biencoder_model_path", mode="after")
+    @field_validator("model_dir", "tokenizer_dir", "categorizer_model_path", "biencoder_model_path", "intelligence_models_path", mode="after")
     @classmethod
     def _resolve_path(cls, v: str | None) -> str | None:
         if not v:

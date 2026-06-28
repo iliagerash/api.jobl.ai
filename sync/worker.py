@@ -100,6 +100,7 @@ class SyncWorker:
                     has_job_category_id_column = self._column_exists(source_engine, db_name, "job", "category_id")
                     has_job_destination_column = self._column_exists(source_engine, db_name, "job", "destination")
                     has_job_destination_job_id_column = self._column_exists(source_engine, db_name, "job", "destination_job_id")
+                    has_job_prediction_columns = self._column_exists(source_engine, db_name, "job", "keyword_title")
 
                     prefer_currency_from_job = self.currency_in_job_enabled(config)
                     has_job_salary_currency_column = self._job_has_salary_currency_column(source_engine, db_name)
@@ -160,6 +161,7 @@ class SyncWorker:
                             has_category_id_column=has_job_category_id_column,
                             has_destination_column=has_job_destination_column,
                             has_destination_job_id_column=has_job_destination_job_id_column,
+                            has_prediction_columns=has_job_prediction_columns,
                             last_job_id=last_job_id,
                             skip_export_filter=resync,
                         )
@@ -182,6 +184,7 @@ class SyncWorker:
                             has_category_id_column=has_job_category_id_column,
                             has_destination_column=has_job_destination_column,
                             has_destination_job_id_column=has_job_destination_job_id_column,
+                            has_prediction_columns=has_job_prediction_columns,
                         )
 
                         self._upsert_jobs(target_engine=target_engine, payload=jobs_payload)
@@ -381,6 +384,7 @@ class SyncWorker:
         has_category_id_column: bool,
         has_destination_column: bool,
         has_destination_job_id_column: bool,
+        has_prediction_columns: bool,
         last_job_id: int,
         skip_export_filter: bool = False,
     ) -> list[dict[str, object | None]]:
@@ -390,6 +394,14 @@ class SyncWorker:
         category_id_sql = "j.category_id AS job_category_id," if has_category_id_column else "NULL AS job_category_id,"
         destination_sql = "j.destination AS job_destination," if has_destination_column else "NULL AS job_destination,"
         destination_job_id_sql = "j.destination_job_id AS job_destination_job_id," if has_destination_job_id_column else "NULL AS job_destination_job_id,"
+        if has_prediction_columns:
+            prediction_sql = """j.predicted_salary_min, j.predicted_salary_max, j.predicted_salary_period,
+                j.predicted_revenue, j.predicted_rps, j.priority_tier,
+                j.keyword_id AS job_keyword_id, j.keyword_title AS job_keyword_title, j.keyword_distance AS job_keyword_distance,"""
+        else:
+            prediction_sql = """NULL AS predicted_salary_min, NULL AS predicted_salary_max, NULL AS predicted_salary_period,
+                NULL AS predicted_revenue, NULL AS predicted_rps, NULL AS priority_tier,
+                NULL AS job_keyword_id, NULL AS job_keyword_title, NULL AS job_keyword_distance,"""
         export_filter_sql = "" if skip_export_filter else """
               AND NOT EXISTS (
                 SELECT 1
@@ -423,6 +435,7 @@ class SyncWorker:
                 {category_id_sql}
                 {destination_sql}
                 {destination_job_id_sql}
+                {prediction_sql}
                 j.salary_min,
                 j.salary_max,
                 j.salary_period,
@@ -493,6 +506,7 @@ class SyncWorker:
         has_category_id_column: bool = False,
         has_destination_column: bool = False,
         has_destination_job_id_column: bool = False,
+        has_prediction_columns: bool = False,
     ) -> list[dict[str, object | None]]:
         payload: list[dict[str, object | None]] = []
         now = datetime.now(timezone.utc)
@@ -547,6 +561,15 @@ class SyncWorker:
                     "category_id": int(row["job_category_id"]) if row.get("job_category_id") and int(row["job_category_id"]) > 0 else None,
                     "destination": str(row["job_destination"]).strip() or None if row.get("job_destination") else None,
                     "destination_job_id": int(row["job_destination_job_id"]) if row.get("job_destination_job_id") else None,
+                    "predicted_salary_min": float(row["predicted_salary_min"]) if row.get("predicted_salary_min") is not None else None,
+                    "predicted_salary_max": float(row["predicted_salary_max"]) if row.get("predicted_salary_max") is not None else None,
+                    "predicted_salary_period": str(row["predicted_salary_period"]).strip() or None if row.get("predicted_salary_period") else None,
+                    "predicted_revenue": float(row["predicted_revenue"]) if row.get("predicted_revenue") is not None else None,
+                    "predicted_rps": float(row["predicted_rps"]) if row.get("predicted_rps") is not None else None,
+                    "priority_tier": str(row["priority_tier"]).strip() or None if row.get("priority_tier") else None,
+                    "keyword_id": int(row["job_keyword_id"]) if row.get("job_keyword_id") else None,
+                    "keyword_title": str(row["job_keyword_title"]).strip() or None if row.get("job_keyword_title") else None,
+                    "keyword_distance": float(row["job_keyword_distance"]) if row.get("job_keyword_distance") is not None else None,
                 }
             )
         return payload
@@ -570,7 +593,10 @@ class SyncWorker:
                 salary_min, salary_max, salary_period, salary_currency,
                 contract, experience, education,
                 published_at, expires_at, is_remote, is_active,
-                category, category_id, destination, destination_job_id
+                category, category_id, destination, destination_job_id,
+                predicted_salary_min, predicted_salary_max, predicted_salary_period,
+                predicted_revenue, predicted_rps, priority_tier,
+                keyword_id, keyword_title, keyword_distance
             ) VALUES (
                 :source_db, :source_job_id, :site_id, :external_id,
                 :title, :description, :company_id, :company_name, :site_title, :url,
@@ -579,7 +605,10 @@ class SyncWorker:
                 :salary_min, :salary_max, :salary_period, :salary_currency,
                 :contract, :experience, :education,
                 :published_at, :expires_at, :is_remote, :is_active,
-                :category, :category_id, :destination, :destination_job_id
+                :category, :category_id, :destination, :destination_job_id,
+                :predicted_salary_min, :predicted_salary_max, :predicted_salary_period,
+                :predicted_revenue, :predicted_rps, :priority_tier,
+                :keyword_id, :keyword_title, :keyword_distance
             )
             ON CONFLICT ON CONSTRAINT uq_jobs_source_external
             DO UPDATE SET
@@ -613,6 +642,15 @@ class SyncWorker:
                 category_id = COALESCE(EXCLUDED.category_id, jobs.category_id),
                 destination = COALESCE(EXCLUDED.destination, jobs.destination),
                 destination_job_id = COALESCE(EXCLUDED.destination_job_id, jobs.destination_job_id),
+                predicted_salary_min = COALESCE(EXCLUDED.predicted_salary_min, jobs.predicted_salary_min),
+                predicted_salary_max = COALESCE(EXCLUDED.predicted_salary_max, jobs.predicted_salary_max),
+                predicted_salary_period = COALESCE(EXCLUDED.predicted_salary_period, jobs.predicted_salary_period),
+                predicted_revenue = COALESCE(EXCLUDED.predicted_revenue, jobs.predicted_revenue),
+                predicted_rps = COALESCE(EXCLUDED.predicted_rps, jobs.predicted_rps),
+                priority_tier = COALESCE(EXCLUDED.priority_tier, jobs.priority_tier),
+                keyword_id = COALESCE(EXCLUDED.keyword_id, jobs.keyword_id),
+                keyword_title = COALESCE(EXCLUDED.keyword_title, jobs.keyword_title),
+                keyword_distance = COALESCE(EXCLUDED.keyword_distance, jobs.keyword_distance),
                 embedding = COALESCE(jobs.embedding, EXCLUDED.embedding),
                 skills = COALESCE(jobs.skills, EXCLUDED.skills)
             """
