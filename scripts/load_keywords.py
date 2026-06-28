@@ -71,7 +71,13 @@ def main():
 
     print("Generating embeddings ...")
     texts = [f"[lang={r['language_code']}][country=XX][type=job] {r['title']}" for r in rows]
-    embeddings = biencoder.encode_batch(texts)
+    embeddings = []
+    batch_size = 32
+    for i in range(0, len(texts), batch_size):
+        batch = texts[i:i + batch_size]
+        embeddings.extend(biencoder.encode_batch(batch))
+        if (i + batch_size) % 500 < batch_size:
+            print(f"  {len(embeddings)}/{len(texts)} encoded ...", flush=True)
     print(f"  {len(embeddings)} embeddings generated")
 
     # Insert into database
