@@ -13,7 +13,7 @@ Scraper flow (every new job):
           → stores in scraper DB → flows to job boards
 
 Job board flow (direct submissions):
-  Resume/job submitted → POST /v1/embed → 1024-dim vector
+  Resume/job submitted → POST /v1/embed → 1024-dim vector + keyword
           → stored in board's MariaDB VECTOR(1024) column
 
 Resume extraction (paying candidates):
@@ -89,7 +89,9 @@ POST /v1/process
 ```
 POST /v1/embed
       │
-      └─ Embedding (bi-encoder ONNX, 1024-dim vector)
+      ├─ Embedding (bi-encoder ONNX, 1024-dim vector)
+      │
+      └─ Keyword matching (nearest from 1,391 normalized titles via pgvector)
 ```
 
 The bi-encoder, categorizer, and skill extractor are **optional**. The API starts and serves requests without them; those fields return `null`.
