@@ -9,6 +9,7 @@ from xml.etree import ElementTree as ET
 
 from sqlalchemy import create_engine, text
 
+from app.services.doc_classifier import classify_doc
 from app.services.language import detect_language_code
 
 logger = logging.getLogger("jobl.sync.resume_xml")
@@ -197,6 +198,7 @@ class ResumeXmlWorker:
                 country_code=country_code,
                 source_db=source_website,
             ).language_code,
+            "doc_type": classify_doc(title=title, description=description),
         }
 
     def _load_existing_external_ids(self, *, engine, source_website: str) -> set[int]:
@@ -215,12 +217,12 @@ class ResumeXmlWorker:
                 source_website, external_id, title, description,
                 city_title, region_title, country_code,
                 salary, salary_period, salary_currency, contract,
-                published_at, is_remote, language_code
+                published_at, is_remote, language_code, doc_type
             ) VALUES (
                 :source_website, :external_id, :title, :description,
                 :city_title, :region_title, :country_code,
                 :salary, :salary_period, :salary_currency, :contract,
-                :published_at, :is_remote, :language_code
+                :published_at, :is_remote, :language_code, :doc_type
             )
             ON CONFLICT ON CONSTRAINT uq_resumes_source_external DO NOTHING
             """

@@ -1,7 +1,7 @@
 from datetime import datetime
 from decimal import Decimal
 
-from sqlalchemy import BIGINT, BOOLEAN, CHAR, DateTime, Index, NUMERIC, TEXT, VARCHAR, UniqueConstraint
+from sqlalchemy import BIGINT, BOOLEAN, CHAR, DateTime, Enum, Index, NUMERIC, TEXT, VARCHAR, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.base import Base
@@ -37,3 +37,7 @@ class Resume(Base):
     language_code: Mapped[str | None] = mapped_column(CHAR(2), nullable=True)
     embedding: Mapped[str | None] = mapped_column(TEXT, nullable=True)  # pgvector vector(1024), actual type set by migration
     skills: Mapped[str | None] = mapped_column(TEXT, nullable=True)  # JSON array
+    doc_type: Mapped[str | None] = mapped_column(
+        Enum("resume", "cover_letter", "stub", "other", name="doc_type_enum", create_type=False),
+        nullable=True,
+    )

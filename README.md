@@ -14,6 +14,7 @@ Scraper flow (every new job):
 
 Job board flow (direct submissions):
   Resume/job submitted → POST /v1/embed → 1024-dim vector + keyword
+          → type=resume: + doc_type (resume/cover_letter/stub/other)
           → stored in board's MariaDB VECTOR(1024) column
 
 Resume extraction (paying candidates):
@@ -41,6 +42,9 @@ Resume extraction (paying candidates):
 - [Architecture](#architecture)
 - [Project Structure](#project-structure)
 - [API Endpoint](#api-endpoint)
+  - [`POST /v1/classify`](#post-v1classify)
+  - [`POST /v1/embed`](#post-v1embed)
+  - [`POST /v1/process`](#post-v1process)
 - [Processing Pipeline](#processing-pipeline)
 - [Graceful Degradation](#graceful-degradation)
 - [Database](#database)
@@ -87,11 +91,22 @@ POST /v1/process
 ```
 
 ```
+POST /v1/classify
+      │
+      └─ Document classification (regex heuristic, no model, no DB)
+           → doc_type: resume | cover_letter | stub | other
+```
+
+```
 POST /v1/embed
       │
       ├─ Embedding (bi-encoder ONNX, 1024-dim vector)
       │
-      └─ Keyword matching (nearest from 1,391 normalized titles via pgvector)
+      ├─ Keyword matching (nearest from 1,391 normalized titles via pgvector)
+      │
+      └─ type=resume only ──────────────────────────────────────────────────┐
+              └─ Document classification (regex heuristic, no model)        │
+                   → doc_type: resume | cover_letter | stub | other  ───────┘
 ```
 
 The bi-encoder, categorizer, and skill extractor are **optional**. The API starts and serves requests without them; those fields return `null`.
@@ -121,6 +136,7 @@ api.jobl.ai/
 │   │   ├── cleaner.py               # HTML cleaner + expiry extractor
 │   │   ├── normalizer.py            # seq2seq title normalizer
 │   │   ├── categorizer.py           # LightGBM job categorizer
+│   │   ├── doc_classifier.py        # resume_classify: doc_type heuristic (no model)
 │   │   ├── salary_predictor.py      # LightGBM salary range prediction
 │   │   └── profitability_predictor.py  # Two-stage LightGBM revenue prediction
 │   └── api/v1/
@@ -158,6 +174,95 @@ api.jobl.ai/
 ---
 
 ## API Endpoint
+
+### `POST /v1/classify`
+
+Lightweight document-type classifier. Accepts a title and optional description; returns `doc_type` only. No model loading, no embedding, no DB access — pure in-process heuristic.
+
+#### Request
+
+```json
+{
+  "title": "Senior Software Engineer",
+  "description": "Work Experience\n- 5 years Python\n\nEducation\nB.Sc. Computer Science"
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `title` | string (1–512 chars) | yes | Resume position title |
+| `description` | string | no | Plain-text or HTML body |
+
+#### Response
+
+```json
+{ "doc_type": "resume" }
+```
+
+`doc_type` is one of `resume`, `cover_letter`, `stub`, or `other` (see [`POST /v1/embed`](#post-v1embed) for value definitions).
+
+---
+
+### `POST /v1/embed`
+
+Generates a 1024-dim embedding vector for a job title or resume, matches the nearest keyword, and — when `type=resume` — classifies the document type.
+
+#### Request
+
+```json
+{
+  "title": "Senior Software Engineer",
+  "description": "...",
+  "type": "resume",
+  "language": "en",
+  "country": "AU",
+  "category_id": 4
+}
+```
+
+| Field | Type | Required | Description |
+|---|---|---|---|
+| `title` | string (1–512 chars) | yes | Job title or resume position |
+| `description` | string | no | Raw HTML or plain-text body |
+| `type` | `"job"` \| `"resume"` | no | Controls embedding prefix and enables classification (default: `"job"`) |
+| `language` | string | no | ISO 2-letter language code; auto-detected if omitted |
+| `country` | string | no | ISO 2-letter country code |
+| `category_id` | int | no | Restricts keyword matching to this category |
+
+#### Response
+
+```json
+{
+  "embedding": [0.012, -0.034, "..."],
+  "language": "en",
+  "keyword": {
+    "canonical_id": 18,
+    "title": "Software Engineer",
+    "distance": 0.2341
+  },
+  "doc_type": "resume"
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `embedding` | array | 1024-dim float vector |
+| `language` | string \| null | Detected or provided language code |
+| `keyword` | object \| null | `{canonical_id, title, distance}` — nearest normalized title within distance 0.5; null if no match |
+| `doc_type` | string \| null | `resume`, `cover_letter`, `stub`, or `other` — set only when `type=resume`; null for jobs |
+
+**`doc_type` values:**
+
+| Value | Meaning |
+|---|---|
+| `resume` | Structured CV — has recognised section headers (`Work Experience`, `Education`, etc.) and/or substantial formatted content |
+| `cover_letter` | Short prose letter — no or minimal section headers, under ~1,500 chars |
+| `stub` | Too thin to be useful — description under 100 chars |
+| `other` | Doesn't look like a candidate document (e.g. a job posting accidentally in the resume feed) |
+
+Classification runs in-process with no model loading and adds negligible latency.
+
+---
 
 ### `POST /v1/process`
 
@@ -380,6 +485,7 @@ Returns `{"id": N, "title": "...", "confidence": 0.xx}` where `confidence` is th
 | Salary already stated (`salary_min > 0`) | `salary_prediction: null` (skipped) |
 | Country not supported for salary (NZ, ZA) | `salary_prediction: null` |
 | No matching keyword within distance 0.5 | `keyword: null` |
+| `type=job` on `/v1/embed` | `doc_type: null` — classification only runs for resumes |
 
 ---
 
@@ -399,13 +505,13 @@ PostgreSQL. Schema managed by Alembic.
 | `countries` | Country lookup (code, name, alternate_names, language_codes) |
 | `source_countries` | MySQL source DB → country/currency/config mapping |
 | `sync_state` | Sync cursor: last synced job ID per (source_db, destination) pair |
-| `resumes` | Raw resume postings for model training (`source_website` + `external_id`, location, salary, `language_code`); populated by `jobl-sync-resumes`. **Not anonymized** — descriptions may contain names, emails, phone numbers, addresses; PII scrubbing happens downstream in the ML pipeline's data-prep step, not at ingest |
+| `resumes` | Raw resume postings for model training (`source_website` + `external_id`, location, salary, `language_code`, `doc_type`); populated by `jobl-sync-resumes`. **Not anonymized** — descriptions may contain names, emails, phone numbers, addresses; PII scrubbing happens downstream in the ML pipeline's data-prep step, not at ingest |
 
-**`resumes` columns:** `id`, `source_website`, `external_id`, `title`, `description`, `city_title`, `region_title`, `country_code`, `salary`, `salary_period`, `salary_currency`, `contract`, `published_at`, `is_remote`, `language_code`. Unique on `(source_website, external_id)`.
+**`resumes` columns:** `id`, `source_website`, `external_id`, `title`, `description`, `city_title`, `region_title`, `country_code`, `salary`, `salary_period`, `salary_currency`, `contract`, `published_at`, `is_remote`, `language_code`, `embedding`, `skills`, `doc_type`. Unique on `(source_website, external_id)`.
 
 ### Migrations
 
-22 migrations in a linear chain. Current head: `c8f2a1b3d4e5` (add_resumes_table).
+23 migrations in a linear chain. Current head: `e1f2a3b4c5d6` (add_doc_type_to_resumes).
 
 ---
 
@@ -913,8 +1019,10 @@ Field mapping:
 | `<contract_code>` | `contract` |
 | `<created_at>` | `published_at` |
 | `<remote>` | `is_remote` (`1` / `true` → remote) |
+| *(derived)* | `language_code` — auto-detected from title + description |
+| *(derived)* | `doc_type` — classified from title + description (`resume` / `cover_letter` / `stub` / `other`) |
 
-Each `<resume>` must include `<id>` (numeric), non-empty `<position>`, and non-empty `<description>`. Rows missing any of these are skipped. `language_code` is detected on import via `app/services/language.py`.
+Each `<resume>` must include `<id>` (numeric), non-empty `<position>`, and non-empty `<description>`. Rows missing any of these are skipped. `language_code` is detected on import via `app/services/language.py`. `doc_type` is classified on import via `app/services/doc_classifier.py` — no API call or model required.
 
 Only resumes not already present (`source_website` + `external_id`) are inserted. By default, only `*.xml` files modified in the last 24 hours are scanned.
 

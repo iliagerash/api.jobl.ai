@@ -4,6 +4,7 @@ from bs4 import BeautifulSoup
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.services.doc_classifier import classify_doc
 from app.services.language import detect_language_code
 
 logger = logging.getLogger("jobl.api.embed")
@@ -32,6 +33,7 @@ class EmbedResponse(BaseModel):
     embedding: list[float]
     language: str | None = None
     keyword: KeywordOut | None = None
+    doc_type: str | None = None  # resume_classify result; set when type=resume
 
 
 @router.post("/embed", response_model=EmbedResponse)
@@ -87,4 +89,8 @@ def embed(body: EmbedRequest, request: Request) -> EmbedResponse:
         except Exception:
             logger.exception("keyword matching failed")
 
-    return EmbedResponse(embedding=embedding, language=lang, keyword=keyword)
+    doc_type: str | None = None
+    if body.type == "resume":
+        doc_type = classify_doc(title=body.title, description=plain_text)
+
+    return EmbedResponse(embedding=embedding, language=lang, keyword=keyword, doc_type=doc_type)
