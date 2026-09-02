@@ -50,9 +50,9 @@ def main():
             FROM jobs j
             WHERE j.embedding IS NOT NULL
               AND j.category_id IS NOT NULL
-              AND j.language_code IN ('en', 'fr')
+              AND j.language_code IN ('en', 'fr', 'gr')
               AND j.expires_at > NOW()
-              AND j.country_code IN ('AU', 'CA', 'GB', 'NZ', 'SG', 'US')
+              AND j.country_code IN ('AU', 'CA', 'GB', 'NZ', 'SG', 'US', 'GR')
               AND NOT EXISTS (SELECT 1 FROM job_keywords jk WHERE jk.job_id = j.id)
               {country_filter}
         """), country_param).scalar()
@@ -75,9 +75,9 @@ def main():
                 FROM jobs j
                 WHERE j.embedding IS NOT NULL
                   AND j.category_id IS NOT NULL
-                  AND j.language_code IN ('en', 'fr')
+                  AND j.language_code IN ('en', 'fr', 'gr')
                   AND j.expires_at > NOW()
-                  AND j.country_code IN ('AU', 'CA', 'GB', 'NZ', 'SG', 'US')
+                  AND j.country_code IN ('AU', 'CA', 'GB', 'NZ', 'SG', 'US', 'GR')
                   AND j.id > :last_id
                   AND NOT EXISTS (SELECT 1 FROM job_keywords jk WHERE jk.job_id = j.id)
                   {country_filter}

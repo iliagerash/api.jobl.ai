@@ -4,14 +4,16 @@ load_keywords.py
 Load taxonomy keywords into the keywords table and generate biencoder
 embeddings for each.
 
-Reads taxonomy JSON (en/fr pairs with canonical_id and category_id),
-inserts both language variants, and encodes them with the biencoder.
+Reads taxonomy JSON (en/fr/gr titles with canonical_id and category_id),
+inserts every language variant present on each entry, and encodes them
+with the biencoder.
 
 Usage:
     python -u scripts/load_keywords.py
     python -u scripts/load_keywords.py --input ml/data/taxonomy/taxonomy_reviewed.json
     python -u scripts/load_keywords.py --biencoder-path models/biencoder-onnx
     python -u scripts/load_keywords.py --clear   # delete existing keywords first
+    python -u scripts/load_keywords.py --languages gr   # only (re-)embed and load one language
 """
 
 import argparse
@@ -27,6 +29,7 @@ from sqlalchemy import create_engine, text
 load_dotenv()
 
 INPUT_PATH = "ml/data/taxonomy/taxonomy_reviewed.json"
+LANGUAGE_FIELDS = ["en", "fr", "gr"]  # taxonomy keys to load; must match app/services/language.py codes
 
 
 def main():
@@ -35,34 +38,41 @@ def main():
     parser.add_argument("--biencoder-path", default="models/biencoder-onnx")
     parser.add_argument("--clear", action="store_true", help="Delete existing keywords before loading")
     parser.add_argument("--db-url", default=None)
+    parser.add_argument(
+        "--languages", default=None,
+        help=f"Comma-separated subset of language fields to (re-)embed and load, e.g. 'gr'. Default: all of {LANGUAGE_FIELDS}",
+    )
     args = parser.parse_args()
 
     db_url = args.db_url or os.environ.get("DATABASE_URL")
     if not db_url:
         sys.exit("No DATABASE_URL")
 
+    languages = args.languages.split(",") if args.languages else LANGUAGE_FIELDS
+    unknown = set(languages) - set(LANGUAGE_FIELDS)
+    if unknown:
+        sys.exit(f"Unknown language(s): {unknown}. Known: {LANGUAGE_FIELDS}")
+
     with open(args.input) as f:
         taxonomy = json.load(f)
 
     print(f"Loaded {len(taxonomy)} keywords from {args.input}")
 
-    # Build keyword rows (en + fr for each canonical)
+    # Build keyword rows — one per requested language field present on each entry
     rows = []
     for item in taxonomy:
-        rows.append({
-            "canonical_id": item["canonical_id"],
-            "title": item["en"],
-            "language_code": "en",
-            "category_id": item["category_id"],
-        })
-        rows.append({
-            "canonical_id": item["canonical_id"],
-            "title": item["fr"],
-            "language_code": "fr",
-            "category_id": item["category_id"],
-        })
+        for lang in languages:
+            title = item.get(lang)
+            if not title:
+                continue
+            rows.append({
+                "canonical_id": item["canonical_id"],
+                "title": title,
+                "language_code": lang,
+                "category_id": item["category_id"],
+            })
 
-    print(f"  {len(rows)} keyword rows (en + fr)")
+    print(f"  {len(rows)} keyword rows ({', '.join(languages)})")
 
     # Generate embeddings
     print(f"Loading biencoder from {args.biencoder_path} ...")
